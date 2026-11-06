@@ -1,0 +1,209 @@
+"""Everything a competitor needs to write a bot.
+
+A bot subclasses ``BaseBot`` and implements ``act(view) -> Action``. The ``view`` is a
+read-only window onto the game: the public map plus the bot's own private memory.
+Bots must only use the public methods/properties below (no underscore attributes).
+"""
+
+from __future__ import annotations
+
+import random
+from collections.abc import Mapping
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import TYPE_CHECKING
+
+from .model import Action, Dir, PipeState, Pos, Surface, dirs_from_mask
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .game import Game
+
+
+@dataclass(frozen=True)
+class CellInfo:
+    """Public knowledge about one cell, identical for every bot."""
+
+    pos: Pos
+    surface: Surface
+    has_pipe: bool | None  # None while untouched (unknown), True/False once unearthed
+    pipe_state: PipeState | None  # OK / BROKEN / FIXED for unearthed pipes, else None
+    pipe_dirs: frozenset[Dir]  # directions an unearthed pipe runs (empty if unknown)
+    bot: int | None  # id of the bot standing here, if any
+
+    @property
+    def walkable(self) -> bool:
+        """True if a bot could move here right now."""
+        return self.surface is Surface.UNTOUCHED and self.bot is None
+
+
+@dataclass(frozen=True)
+class ActionResult:
+    """Outcome of a bot's previous action (available as ``view.last_result``)."""
+
+    action: Action | None
+    success: bool
+    message: str = ""  # reason when the action was invalid
+    points: int = 0  # points earned by this action
+    detected_pipe: bool | None = None  # detect: was there a pipe?
+    detected_leak: bool | None = None  # detect with UT upgrade: was it leaking?
+
+
+class BotView:
+    """Read-only view of the game handed to ``BaseBot.act``. Cheap to create, nothing copied."""
+
+    __slots__ = ("_game", "_bot_id")
+
+    def __init__(self, game: Game, bot_id: int) -> None:
+        self._game = game
+        self._bot_id = bot_id
+
+    # --- Identity & time -------------------------------------------------------------
+    @property
+    def bot_id(self) -> int:
+        return self._bot_id
+
+    @property
+    def me(self) -> Pos:
+        """Your current position (x, y)."""
+        return self._game._states[self._bot_id].pos
+
+    @property
+    def round(self) -> int:
+        """Current round, starting at 0. One round = every bot acts once."""
+        return self._game.round
+
+    @property
+    def max_rounds(self) -> int:
+        return self._game.config.max_rounds
+
+    @property
+    def rounds_left(self) -> int:
+        """Rounds remaining including the current one."""
+        return self._game.config.max_rounds - self._game.round
+
+    @property
+    def n_bots(self) -> int:
+        return len(self._game._states)
+
+    # --- Scoring -----------------------------------------------------------------------
+    @property
+    def score(self) -> int:
+        """Your score so far (the open-hole penalty is only applied at game end)."""
+        return self._game._states[self._bot_id].score
+
+    @property
+    def scores(self) -> tuple[int, ...]:
+        """Current score of every bot, indexed by bot id."""
+        return tuple(s.score for s in self._game._states)
+
+    @property
+    def points(self) -> Mapping[str, int]:
+        """Point values of the current rules (pipe_detected, leak_found, leak_fixed, open_hole_penalty)."""
+        c = self._game.config
+        return MappingProxyType(
+            {
+                "pipe_detected": c.points_pipe_detected,
+                "leak_found": c.points_leak_found,
+                "leak_fixed": c.points_leak_fixed,
+                "open_hole_penalty": c.penalty_open_pipe_hole,
+            }
+        )
+
+    # --- Map ---------------------------------------------------------------------------
+    @property
+    def width(self) -> int:
+        return self._game.config.width
+
+    @property
+    def height(self) -> int:
+        return self._game.config.height
+
+    def in_bounds(self, pos: Pos) -> bool:
+        return 0 <= pos[0] < self.width and 0 <= pos[1] < self.height
+
+    def cell(self, pos: Pos) -> CellInfo:
+        """Public info about the cell at pos (raises IndexError outside the grid)."""
+        if not self.in_bounds(pos):
+            raise IndexError(f"{pos} is outside the {self.width}x{self.height} grid")
+        c = self._game._cells[pos[1]][pos[0]]
+        if c.surface is Surface.UNEARTHED:
+            show_dirs = self._game.config.reveal_pipe_dirs
+            return CellInfo(
+                pos,
+                c.surface,
+                c.has_pipe,
+                c.pipe_state,
+                dirs_from_mask(c.pipe_mask) if show_dirs else frozenset(),
+                c.occupant,
+            )
+        return CellInfo(pos, c.surface, None, None, frozenset(), c.occupant)
+
+    def surface(self, pos: Pos) -> Surface:
+        """Fast shortcut for ``cell(pos).surface``."""
+        return self._game._cells[pos[1]][pos[0]].surface
+
+    def is_walkable(self, pos: Pos) -> bool:
+        """True if pos is inside the grid, untouched and free of bots."""
+        if not self.in_bounds(pos):
+            return False
+        c = self._game._cells[pos[1]][pos[0]]
+        return c.surface is Surface.UNTOUCHED and c.occupant is None
+
+    def neighbor(self, direction: Dir, pos: Pos | None = None) -> Pos:
+        """Position next to pos (default: you) in a direction. May be outside the grid."""
+        return direction.step(self.me if pos is None else pos)
+
+    def bot_positions(self) -> dict[int, Pos]:
+        """Positions of all bots (including you), keyed by bot id."""
+        return {i: s.pos for i, s in enumerate(self._game._states)}
+
+    # --- Private memory ----------------------------------------------------------------
+    @property
+    def detected(self) -> Mapping[Pos, bool]:
+        """Your own detect results: pos -> had a pipe. Other bots cannot see this."""
+        return MappingProxyType(self._game._states[self._bot_id].detected)
+
+    @property
+    def detected_leaks(self) -> Mapping[Pos, bool]:
+        """Leak readings from detect (only filled when you have the UT upgrade)."""
+        return MappingProxyType(self._game._states[self._bot_id].detected_leaks)
+
+    @property
+    def has_ut_upgrade(self) -> bool:
+        return self._game._states[self._bot_id].ut_upgrade
+
+    @property
+    def last_result(self) -> ActionResult | None:
+        """Outcome of your previous action (None on your first turn)."""
+        return self._game._states[self._bot_id].last_result
+
+
+class BaseBot:
+    """Parent class of every bot. Override ``act``; the other hooks are optional.
+
+    Class attributes:
+        name:   display name (defaults to the class name)
+        sprite: PNG filename in ``bots/sprites/`` (defaults to ``<ClassName>.png`` if present)
+    """
+
+    name: str | None = None
+    sprite: str | None = None
+
+    def __init__(self) -> None:
+        # Set by the engine before on_game_start: your id and a seeded RNG for reproducible games
+        self.id: int = -1
+        self.rng: random.Random = random.Random()
+
+    @classmethod
+    def display_name(cls) -> str:
+        return cls.name or cls.__name__
+
+    def on_game_start(self, view: BotView) -> None:
+        """Called once before the first turn."""
+
+    def act(self, view: BotView) -> Action:
+        """Return the Action to perform this turn."""
+        raise NotImplementedError
+
+    def on_game_end(self, view: BotView) -> None:
+        """Called once after the final round (scores are final)."""

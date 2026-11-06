@@ -1,0 +1,224 @@
+"""Rules and scoring on a hand-made 5x5 map.
+
+Layout (x right, y down): a straight pipe along row y=2 that leads off both edges,
+with a leak at (2, 2). Bot 0 spawns at (2, 1) directly above the leak.
+"""
+
+from dataclasses import replace
+
+import pytest
+
+from leakbots import Action, BaseBot, Dir, Game, GameConfig, PipeState, Surface
+from leakbots.bot_api import BotView
+
+H = Dir.LEFT.bit | Dir.RIGHT.bit
+MASKS = [[0] * 5, [0] * 5, [H] * 5, [0] * 5, [0] * 5]
+LEAK = (2, 2)
+CONFIG = GameConfig(width=5, height=5, max_rounds=10, n_leaks=1)
+
+
+class IdleBot(BaseBot):
+    """Returns no action (always invalid), so tests drive the game via apply_action."""
+
+    def act(self, view):
+        return None
+
+
+def make_game(n_bots=1, spawns=((2, 1), (0, 0)), config=CONFIG, bot=IdleBot):
+    return Game([bot] * n_bots, config, seed=0, masks=MASKS, leaks=[LEAK], spawns=list(spawns[:n_bots]))
+
+
+def ok(game, action, bot_id=0):
+    result = game.apply_action(bot_id, action)
+    assert result.success, result.message
+    return result
+
+
+def bad(game, action, bot_id=0):
+    result = game.apply_action(bot_id, action)
+    assert not result.success
+    return result
+
+
+# --- Movement --------------------------------------------------------------------------------
+def test_move_updates_position_and_occupancy():
+    g = make_game()
+    ok(g, Action.move(Dir.LEFT))
+    assert g.states[0].pos == (1, 1)
+    assert g.cell((1, 1)).occupant == 0 and g.cell((2, 1)).occupant is None
+
+
+def test_cannot_leave_grid():
+    g = make_game(spawns=((0, 0),))
+    assert "outside" in bad(g, Action.move(Dir.UP)).message
+    assert g.states[0].pos == (0, 0)
+
+
+def test_cannot_stand_on_unearthed_cell():
+    g = make_game()
+    ok(g, Action.unearth(Dir.DOWN))
+    assert "unearthed" in bad(g, Action.move(Dir.DOWN)).message
+
+
+def test_cannot_move_onto_other_bot():
+    g = make_game(n_bots=2, spawns=((2, 1), (3, 1)))
+    assert "occupied" in bad(g, Action.move(Dir.RIGHT)).message
+
+
+# --- Detect ----------------------------------------------------------------------------------
+def test_detect_scores_once_per_pipe_cell_and_is_private():
+    g = make_game(n_bots=2)
+    r = ok(g, Action.detect(Dir.DOWN))
+    assert r.detected_pipe is True and r.points == 1 and r.detected_leak is None
+    assert ok(g, Action.detect(Dir.DOWN)).points == 0  # same cell again: no points
+    assert ok(g, Action.detect(Dir.UP)).detected_pipe is False
+    assert g.states[0].score == 1 and g.states[0].pipes_detected == 1
+    assert dict(BotView(g, 0).detected) == {(2, 2): True, (2, 0): False}
+    assert dict(BotView(g, 1).detected) == {}  # other bot learns nothing
+
+
+def test_detect_on_unearthed_pipe_scores_nothing():
+    g = make_game()
+    ok(g, Action.unearth(Dir.DOWN))
+    assert ok(g, Action.detect(Dir.DOWN)).points == 0
+
+
+def test_ut_upgrade_detects_leaks():
+    g = make_game(config=replace(CONFIG, ut_upgrade=True))
+    r = ok(g, Action.detect(Dir.DOWN))
+    assert r.detected_leak is True and r.points == 1 + 5
+    assert g.cell(LEAK).leak_found
+
+
+# --- Unearth / fix / refill ----------------------------------------------------------------
+def test_unearth_leak_scores_once_and_records_digger():
+    g = make_game()
+    r = ok(g, Action.unearth(Dir.DOWN))
+    assert r.points == 5 and g.states[0].leaks_found == 1
+    cell = g.cell(LEAK)
+    assert cell.surface is Surface.UNEARTHED and cell.dug_by == 0
+    assert "already" in bad(g, Action.unearth(Dir.DOWN)).message
+
+
+def test_cannot_unearth_cell_with_bot():
+    g = make_game(n_bots=2, spawns=((2, 1), (3, 1)))
+    assert "standing" in bad(g, Action.unearth(Dir.RIGHT)).message
+
+
+def test_fix_requires_unearthed_broken_pipe():
+    g = make_game()
+    assert "unearth" in bad(g, Action.fix(Dir.DOWN)).message
+    ok(g, Action.unearth(Dir.UP))  # (2, 0): no pipe
+    assert "no pipe" in bad(g, Action.fix(Dir.UP)).message
+    ok(g, Action.unearth(Dir.DOWN))
+    r = ok(g, Action.fix(Dir.DOWN))
+    assert r.points == 15 and g.cell(LEAK).pipe_state is PipeState.FIXED
+    assert "not broken" in bad(g, Action.fix(Dir.DOWN)).message
+    assert g.states[0].score == 5 + 15
+
+
+def test_refill_blocked_on_leak_until_fixed():
+    g = make_game()
+    ok(g, Action.unearth(Dir.DOWN))
+    assert "fix" in bad(g, Action.refill(Dir.DOWN)).message
+    ok(g, Action.fix(Dir.DOWN))
+    ok(g, Action.refill(Dir.DOWN))
+    cell = g.cell(LEAK)
+    assert cell.surface is Surface.UNTOUCHED and cell.dug_by is None
+    ok(g, Action.move(Dir.DOWN))  # walkable again
+
+
+def test_refill_any_hole_including_other_bots():
+    g = make_game(n_bots=2, spawns=((2, 1), (2, 3)))
+    ok(g, Action.unearth(Dir.LEFT), bot_id=1)  # bot 1 digs (1, 3), no pipe
+    assert "nothing" in bad(g, Action.refill(Dir.LEFT)).message  # bot 0's left (1, 1) is untouched
+    ok(g, Action.move(Dir.LEFT))  # bot 0 -> (1, 1)
+    ok(g, Action.unearth(Dir.DOWN))  # (1, 2) pipe, dug by bot 0
+    ok(g, Action.refill(Dir.DOWN))
+    assert g.cell((1, 2)).surface is Surface.UNTOUCHED
+
+
+# --- End of game -----------------------------------------------------------------------------
+def test_open_pipe_holes_cost_the_latest_digger():
+    cfg = replace(CONFIG, max_rounds=1)
+    g = make_game(n_bots=2, spawns=((1, 1), (3, 3)), config=cfg)
+    ok(g, Action.unearth(Dir.DOWN), bot_id=0)  # (1, 2) pipe -> bot 0
+    ok(g, Action.unearth(Dir.UP), bot_id=1)  # (3, 2) pipe -> bot 1
+    ok(g, Action.refill(Dir.UP), bot_id=1)  # bot 1 refills its hole ...
+    ok(g, Action.unearth(Dir.UP), bot_id=1)  # ... and digs it again: still bot 1's
+    ok(g, Action.unearth(Dir.RIGHT), bot_id=1)  # (4, 3) no pipe: no penalty
+    assert g.open_pipe_holes(0) == 1 and g.open_pipe_holes(1) == 1
+    g.run()  # 1 round: both IdleBots waste a turn, then penalties apply
+    assert g.over
+    assert (g.states[0].open_holes, g.states[0].score) == (1, -2)
+    assert (g.states[1].open_holes, g.states[1].score) == (1, -2)
+
+
+def test_refilled_hole_is_not_penalised():
+    g = make_game(config=replace(CONFIG, max_rounds=1))
+    ok(g, Action.unearth(Dir.DOWN))
+    ok(g, Action.fix(Dir.DOWN))
+    ok(g, Action.refill(Dir.DOWN))
+    g.run()
+    assert g.states[0].score == 5 + 15 and g.states[0].open_holes == 0
+
+
+# --- Turn loop -------------------------------------------------------------------------------
+class RecorderBot(BaseBot):
+    calls: list = []
+
+    def act(self, view):
+        RecorderBot.calls.append((view.bot_id, view.round))
+        return Action.detect(Dir.UP)
+
+
+def test_round_robin_and_round_cap():
+    RecorderBot.calls = []
+    g = make_game(n_bots=2, bot=RecorderBot, config=replace(CONFIG, max_rounds=3))
+    g.run()
+    assert RecorderBot.calls == [(0, 0), (1, 0), (0, 1), (1, 1), (0, 2), (1, 2)]
+    assert g.over and g.turn == 6 and g.step() is None
+
+
+def test_single_player_acts_every_turn():
+    RecorderBot.calls = []
+    make_game(n_bots=1, bot=RecorderBot, config=replace(CONFIG, max_rounds=4)).run()
+    assert [c[0] for c in RecorderBot.calls] == [0, 0, 0, 0]
+
+
+class CrashBot(BaseBot):
+    def act(self, view):
+        raise RuntimeError("boom")
+
+
+class JunkBot(BaseBot):
+    def act(self, view):
+        return "up"
+
+
+@pytest.mark.parametrize("bot", [CrashBot, JunkBot])
+def test_broken_bots_only_waste_their_turn(bot):
+    g = make_game(bot=bot, config=replace(CONFIG, max_rounds=5)).run()
+    assert g.over and g.states[0].invalid == 5 and g.states[0].score == 0
+
+
+# --- What bots can see -----------------------------------------------------------------------
+def test_view_hides_buried_pipes_and_shows_dug_ones():
+    g = make_game()
+    view = BotView(g, 0)
+    assert view.cell(LEAK).has_pipe is None and view.cell(LEAK).pipe_dirs == frozenset()
+    ok(g, Action.unearth(Dir.DOWN))
+    info = view.cell(LEAK)
+    assert info.has_pipe is True and info.pipe_state is PipeState.BROKEN
+    assert info.pipe_dirs == {Dir.LEFT, Dir.RIGHT}
+    assert not hasattr(info, "dug_by")
+    assert view.me == (2, 1) and view.cell((2, 1)).bot == 0 and not view.is_walkable(LEAK)
+
+
+def test_same_seed_same_game():
+    from bots.random_bot import RandomBot
+
+    a = Game([RandomBot, RandomBot], seed=42).run()
+    b = Game([RandomBot, RandomBot], seed=42).run()
+    assert [s.score for s in a.states] == [s.score for s in b.states]
+    assert [e.action for e in a.history] == [e.action for e in b.history]

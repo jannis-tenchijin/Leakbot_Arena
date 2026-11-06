@@ -1,0 +1,16 @@
+[project]
+name = "leakbots-arena"
+version = "0.1.0"
+description = "Program autonomous bots that find and fix buried water leaks on a grid."
+requires-python = ">=3.10"
+dependencies = ["pygame-ce>=2.5"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
