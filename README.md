@@ -156,6 +156,18 @@ Key parts of the `view` (full list in [leakbots/bot_api.py](leakbots/bot_api.py)
 
 Fair play: only use the public members of `view` (nothing starting with `_`).
 
+## Example bots
+
+| Bot | Strategy | Solo avg (100 rounds) |
+|-----|----------|----------------------:|
+| `random_bot` | random actions — the baseline | about −3 |
+| `government_bot` | follows detected pipes for points, buys UT at 15, then scans for leaks and digs, fixes and refills them | about 266 |
+| `tenchijin_bot` | earns 25 points, buys the satellite, then digs D/E squares by risk vs. walking distance (fix + refill leaks, refill the rest) | about 98 |
+
+Try them: `python main.py --bots government_bot tenchijin_bot random_bot`, or on the web
+`?bots=government_bot,tenchijin_bot,random_bot`. Both strategy bots are single, commented files —
+good starting points for your own bot.
+
 ## Browser version (GitHub Pages)
 
 The same Python code runs in the browser via [pygbag](https://pypi.org/project/pygbag/)
