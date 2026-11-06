@@ -45,6 +45,8 @@ leaking water pipes on a grid. Python 3.10+, pygame-ce for the viewer, pytest fo
   README rules table, and tests for each valid/invalid case.
 - Randomness: the engine uses `Game.rng` seeded from `seed`; bots get `self.rng`. Same seed
   must replay the same game (`test_same_seed_same_game`).
+- Manual mode (`gui/manual.py`, `tests/test_manual.py`): `W A S D Q E R F 1 2` are game keys
+  there, so new global hotkeys must avoid them; a new action also needs a key + help-box row.
 
 ## UI text and languages (English / Japanese)
 

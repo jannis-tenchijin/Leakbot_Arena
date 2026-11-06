@@ -110,13 +110,28 @@ def test_sidebar_text_fits(app, lang):
     from leakbots.gui import theme
 
     app.set_language(lang)
-    for key in ("hint_keys1", "hint_keys2", "hint_drop", "hint_web_sprite", "subtitle"):
+    app.sim_rounds = 100  # the real default: the fixture's 5 rounds would hide an overflowing label
+    for key in ("hint_keys1", "hint_keys2", "hint_drop", "hint_web_sprite", "subtitle",
+                "hint_manual1", "hint_manual2"):
         size = 12 if key == "subtitle" else 11
         assert theme.font(size).size(app.t(key))[0] <= app_module.SIDEBAR_W, (lang, key)
     logo_w = theme.font(app.logo_size, bold=True, japanese=False).size("LEAKBOTS")[0]
     assert app.sidebar_x + logo_w < app.rules_button.rect.x  # logo clear of the corner buttons
-    for button in app.buttons + [app.rules_button]:
-        assert theme.font(button.size, bold=True).size(button.label)[0] <= button.rect.w - 8, button.label
+    # Every state of the toggle labels (PIPES / MARKS / MANUAL); the flags only change the text here
+    for flag in (False, True):
+        app.ghost_pipes = app.show_marks = app.manual = flag
+        for button in app.buttons + [app.rules_button]:
+            assert theme.font(button.size, bold=True).size(button.label)[0] <= button.rect.w - 8, button.label
+    app.manual = False
+    # Manual-mode key help box: key caps fit their column, descriptions the rest of the box
+    from leakbots.gui.manual import HELP_ROWS
+
+    text_w = app_module.SIDEBAR_W - 20 - app_module.HELP_KEY_W
+    for keys_key, text_key, _ in HELP_ROWS:
+        assert theme.font(12, bold=True).size(app.t(keys_key))[0] <= app_module.HELP_KEY_W - 8, keys_key
+        assert theme.font(12).size(app.t(text_key, c=999))[0] <= text_w, text_key
+    for key, size in (("help_note", 11), ("help_title", 12), ("speed_manual", 12), ("mode_manual", 12)):
+        assert theme.font(size, bold=True).size(app.t(key))[0] <= app_module.SIDEBAR_W - 20, key
 
 
 def test_simulation_runs_across_frames(app):
