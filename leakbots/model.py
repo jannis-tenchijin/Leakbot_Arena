@@ -84,6 +84,9 @@ class PowerUp(Enum):
     SATELLITE = "satellite"  # Tenchijin satellite: the whole pipe network with risk grades
 
 
+RISK_GRADES = ("A", "B", "C", "D", "E")  # satellite risk grades of pipe squares, lowest risk first
+
+
 @dataclass(frozen=True)
 class Action:
     """One bot move: an action type plus its target (a direction, or a power-up for BUY)."""
@@ -129,6 +132,7 @@ class Cell:
     surface: Surface = Surface.UNTOUCHED
     pipe_mask: int = 0  # connection bits (see Dir.bit); 0 means no pipe
     pipe_state: PipeState | None = None
+    risk: str | None = None  # satellite risk grade "A".."E" of a pipe square (fixed for the round)
     leak_found: bool = False  # a bot has already been credited for finding this leak
     revealed: bool = False  # was unearthed at some point: its pipe is public knowledge forever
     dug_by: int | None = None  # bot id of the latest digger (game master only)

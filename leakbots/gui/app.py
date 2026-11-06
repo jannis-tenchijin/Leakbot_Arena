@@ -21,7 +21,7 @@ from ..bot_api import BaseBot
 from ..config import DEFAULT_CONFIG, GameConfig
 from ..game import Game
 from ..loader import SPRITES_DIR, sprite_path
-from ..model import PowerUp
+from ..model import RISK_GRADES, PowerUp
 from ..simulation import SimulationResult, SimulationRunner, seat_labels
 from . import theme
 from .i18n import LANGS, rulebook, tr
@@ -334,6 +334,8 @@ class App:
     def draw(self, now: float) -> None:
         self.screen.fill(theme.BG)
         self.renderer.draw(self.screen, now, self.ghost_pipes, self.show_marks, self.sprites)
+        if self.renderer.show_risk(self.ghost_pipes):
+            self._draw_risk_legend()
         if self.game.over:
             self._draw_game_over()
         self._draw_sidebar(now)
@@ -491,6 +493,23 @@ class App:
                               f=f"{seat.mean('leaks_found'):.2f}", x=f"{seat.mean('leaks_fixed'):.2f}",
                               h=f"{seat.mean('open_holes'):.1f}"), (x, y), 12, theme.MUTED)
             y += 20
+
+    def _draw_risk_legend(self) -> pygame.Rect:
+        """One-line key for the satellite risk letters, in the free strip below the board."""
+        board = self.renderer.board_rect()
+        label = theme.font(12, bold=True).render(self.t("risk_legend"), True, theme.TEXT)
+        badges = [self.renderer.risk_badge(grade) for grade in RISK_GRADES]
+        h = max(label.get_height(), badges[0].get_height()) + 6
+        w = label.get_width() + sum(b.get_width() + 3 for b in badges) + 26
+        box = pygame.Rect(board.x - 4, board.bottom + 8, w, h)  # board frame ends 4 px below the board
+        pygame.draw.rect(self.screen, theme.PANEL, box, border_radius=6)
+        pygame.draw.rect(self.screen, theme.PANEL_EDGE, box, width=2, border_radius=6)
+        self.screen.blit(label, label.get_rect(midleft=(box.x + 10, box.centery)))
+        x = box.x + 10 + label.get_width() + 10
+        for badge in badges:  # the A-E colour scale, same chips as on the board
+            self.screen.blit(badge, badge.get_rect(midleft=(x, box.centery)))
+            x += badge.get_width() + 3
+        return box
 
     def _draw_game_over(self) -> None:
         g = self.game

@@ -10,7 +10,7 @@ from pathlib import Path
 import pygame
 
 from ..game import Game, MoveEvent
-from ..model import ActionType, Dir, PipeState, Pos, Surface
+from ..model import ActionType, Dir, PipeState, Pos, PowerUp, Surface
 from . import theme
 
 _STRAIGHT = {Dir.UP.bit | Dir.DOWN.bit, Dir.LEFT.bit | Dir.RIGHT.bit}
@@ -46,6 +46,7 @@ class BoardRenderer:
         self.effects: list[Effect] = []
         self._tween: dict[int, tuple[tuple[float, float], tuple[float, float], float, float]] = {}
         self._sprites: dict[tuple[Path | None, int], pygame.Surface | None] = {}
+        self._risk_badges: dict[str, pygame.Surface] = {}
         self._build_tiles()
         self.game: Game | None = None
         self.pipe_layer: pygame.Surface | None = None
@@ -259,6 +260,10 @@ class BoardRenderer:
                 elif ghost_pipes and cell.pipe_state is PipeState.BROKEN:
                     self._draw_leak(surf, rect, now, int(70 + 60 * pulse))
 
+        # 3b) Satellite risk grades for the audience (same game-master toggle as the ghost pipes)
+        if self.show_risk(ghost_pipes):
+            self._draw_risk(surf)
+
         # 4) Private detect marks (audience only; bots never see each other's)
         if show_marks:
             self._draw_marks(surf)
@@ -300,11 +305,43 @@ class BoardRenderer:
         pygame.draw.rect(surf, theme.CLAMP, band, border_radius=2)
         pygame.draw.rect(surf, theme.PIPE_LINE, band, width=1, border_radius=2)
 
+    def show_risk(self, ghost_pipes: bool) -> bool:
+        """Risk grades are public to the audience once any bot owns the satellite (ghost view only)."""
+        return ghost_pipes and any(PowerUp.SATELLITE in s.upgrades for s in self.game.states)
+
+    def risk_badge(self, grade: str) -> pygame.Surface:
+        """Small grade letter on a dark rounded backdrop (readable on grass and in holes), cached."""
+        badge = self._risk_badges.get(grade)
+        if badge is None:
+            color = theme.RISK_COLORS[grade]
+            font = theme.font(max(9, self.tile * 2 // 5), bold=True, japanese=False)
+            img = font.render(grade, True, color)
+            glyph = img.get_bounding_rect()  # the font box has lots of empty space above/below
+            side = max(glyph.w, glyph.h) + 6
+            badge = pygame.Surface((side, side), pygame.SRCALPHA)
+            box = badge.get_rect()
+            pygame.draw.rect(badge, (*theme.BG, 215), box, border_radius=side // 3)
+            pygame.draw.rect(badge, (*color, 150), box, width=1, border_radius=side // 3)
+            badge.blit(img, ((side - glyph.w) // 2, (side - glyph.h) // 2), glyph)  # glyph area only, centred
+            self._risk_badges[grade] = badge
+        return badge
+
+    def _draw_risk(self, surf: pygame.Surface) -> None:
+        t = self.tile
+        ox, oy = self.origin
+        for y, row in enumerate(self.game.cells):
+            for x, cell in enumerate(row):
+                if cell.risk is not None:
+                    badge = self.risk_badge(cell.risk)
+                    surf.blit(badge, badge.get_rect(center=(ox + x * t + t // 2, oy + y * t + t // 2)))
+
     def _draw_marks(self, surf: pygame.Surface) -> None:
         g, t = self.game, self.tile
         r = max(2, t // 9)
         corners = [(0.2, 0.8), (0.8, 0.8), (0.2, 0.2), (0.8, 0.2)]
         for bot_id, state in enumerate(g.states):
+            if PowerUp.SATELLITE in state.upgrades:
+                continue  # knows every square: a dot on all of them would bury the board
             color = theme.BOT_COLORS[bot_id % len(theme.BOT_COLORS)]
             fx, fy = corners[bot_id % 4]
             for (x, y), had_pipe in state.detected.items():
