@@ -52,8 +52,8 @@ class ActionResult:
     success: bool
     message: str = ""  # reason when the action was invalid
     points: int = 0  # points earned by this action (negative for a power-up purchase)
-    detected_pipe: bool | None = None  # detect: was there a pipe?
-    detected_leak: bool | None = None  # detect with UT upgrade: was it leaking?
+    scan: Mapping[Pos, bool] | None = None  # detect / move auto-detect: pos -> had a pipe
+    scan_leaks: Mapping[Pos, bool] | None = None  # same squares with UT: pos -> leaking
 
 
 class BotView:
@@ -190,12 +190,12 @@ class BotView:
     # --- Private memory ----------------------------------------------------------------
     @property
     def detected(self) -> Mapping[Pos, bool]:
-        """Your own detect results: pos -> had a pipe. Other bots cannot see this."""
+        """Your own detect and auto-detect results: pos -> had a pipe. Other bots cannot see this."""
         return MappingProxyType(self._game._states[self._bot_id].detected)
 
     @property
     def detected_leaks(self) -> Mapping[Pos, bool]:
-        """Leak readings (pos -> leaking) from detects made after buying UT."""
+        """Leak readings (pos -> leaking) from detects and auto-detects made after buying UT."""
         return MappingProxyType(self._game._states[self._bot_id].detected_leaks)
 
     @property
