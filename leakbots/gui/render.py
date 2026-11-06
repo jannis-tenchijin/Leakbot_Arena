@@ -1,4 +1,4 @@
-"""Board drawing: ground tiles, shaded pipes, bots, detect marks and action effects."""
+"""Board drawing: ground tiles, shaded pipes, valves, the waterworks, bots, detect marks and effects."""
 
 from __future__ import annotations
 
@@ -24,13 +24,14 @@ def _lerp(a: tuple[int, ...], b: tuple[int, ...], t: float) -> tuple[int, ...]:
 class Effect:
     """A short-lived animation anchored to a board cell."""
 
-    kind: str  # "ping", "dust", "spark", "fill", "points", "invalid"
+    kind: str  # "ping", "dust", "spark", "fill", "points", "invalid", "turn"
     pos: Pos
     start: float
     duration: float
     color: tuple[int, int, int]
     text: str = ""
     particles: list[tuple[float, float]] = field(default_factory=list)
+    spin: int = 1  # "turn": +1 counter-clockwise (opening), -1 clockwise (closing)
 
 
 class BoardRenderer:
@@ -203,6 +204,12 @@ class BoardRenderer:
             self._add(Effect("spark", event.target, now, 0.6, theme.CLAMP))
         elif kind is ActionType.REFILL:
             self._add(Effect("fill", event.target, now, 0.3, theme.DIRT))
+        elif kind is ActionType.INSTALL_VALVE:
+            self._add(Effect("ping", event.target, now, 0.4, theme.PIPE_LIGHT))
+        elif kind is ActionType.CLOSE_VALVE:  # righty-tighty: the wheel turns clockwise
+            self._add(Effect("turn", event.target, now, 0.45, theme.VALVE_CLOSED, spin=-1))
+        elif kind is ActionType.OPEN_VALVE:
+            self._add(Effect("turn", event.target, now, 0.45, theme.VALVE_OPEN, spin=1))
         elif kind is ActionType.BUY:
             self._add(Effect("spark", event.from_pos, now, 0.8, theme.ACCENT))
         elif kind is ActionType.CHAIN:
@@ -267,6 +274,8 @@ class BoardRenderer:
                         pygame.draw.rect(surf, red, rect, width=2)  # pulsing alarm frame
                     elif cell.pipe_state is PipeState.FIXED:
                         self._draw_clamp(surf, rect, cell.pipe_mask)
+                    if cell.valve:  # handwheel on the pipe: green = open, red = closed
+                        draw_valve(surf, rect.center, self.tile, cell.valve_open)
                 elif ghost_pipes and cell.pipe_state is PipeState.BROKEN:
                     self._draw_leak(surf, rect, now, int(70 + 60 * pulse))
 
@@ -274,9 +283,17 @@ class BoardRenderer:
         if self.show_risk(ghost_pipes):
             self._draw_risk(surf)
 
+        # 3c) The waterworks (public: every bot knows where power-ups are sold)
+        if g.waterworks_pos is not None:
+            draw_waterworks(surf, self.cell_rect(g.waterworks_pos))
+
         # 4) Private detect marks (audience only; bots never see each other's)
         if show_marks:
             self._draw_marks(surf)
+
+        # 4a) Closed valves buried by a refill still cost their closer: a small red sign (ghost view)
+        if ghost_pipes:
+            self._draw_buried_valves(surf)
 
         # 4b) Punk pickup lying on the board
         if g.punk_pos is not None and g.cell(g.punk_pos).item == PUNK_ITEM:
@@ -348,9 +365,24 @@ class BoardRenderer:
         ox, oy = self.origin
         for y, row in enumerate(self.game.cells):
             for x, cell in enumerate(row):
-                if cell.risk is not None:
+                # The waterworks never leaks; a dug-up valve says more than its grade (and the badge hides it)
+                dug_valve = cell.valve and cell.surface is Surface.UNEARTHED
+                if cell.risk is not None and not cell.building and not dug_valve:
                     badge = self.risk_badge(cell.risk)
                     surf.blit(badge, badge.get_rect(center=(ox + x * t + t // 2, oy + y * t + t // 2)))
+
+    def _draw_buried_valves(self, surf: pygame.Surface) -> None:
+        """Closed valves under refilled soil: a red no-entry sign in the square's top-right corner."""
+        t = self.tile
+        r = max(3, round(t * 0.15))
+        for y, row in enumerate(self.game.cells):
+            for x, cell in enumerate(row):
+                if cell.valve and not cell.valve_open and cell.surface is not Surface.UNEARTHED:
+                    rect = self.cell_rect((x, y))
+                    c = (rect.right - r - 2, rect.y + r + 2)
+                    pygame.draw.circle(surf, theme.PIPE_LINE, c, r + 1)
+                    pygame.draw.circle(surf, theme.VALVE_CLOSED, c, r)
+                    pygame.draw.line(surf, (250, 250, 250), (c[0] - r + 2, c[1]), (c[0] + r - 2, c[1]), 2)
 
     def _draw_marks(self, surf: pygame.Surface) -> None:
         g, t = self.game, self.tile
@@ -442,6 +474,50 @@ class BoardRenderer:
         self.effects = alive
 
 
+def draw_valve(surf: pygame.Surface, center: tuple[float, float], t: int, is_open: bool) -> None:
+    """Handwheel valve on a pipe: green with + spokes when open, red with x spokes when closed."""
+    cx, cy = round(center[0]), round(center[1])
+    r = max(4, round(t * 0.27))
+    rim = max(2, t // 10)
+    color = theme.VALVE_OPEN if is_open else theme.VALVE_CLOSED
+    tilt = 0.0 if is_open else math.pi / 4  # a quarter-turn look, so the state reads without colour too
+    for width, col in ((rim + 2, theme.PIPE_LINE), (rim, color)):  # dark outline first, then the wheel
+        pygame.draw.circle(surf, col, (cx, cy), r + (1 if col is theme.PIPE_LINE else 0), width)
+        for k in range(2):
+            a = tilt + k * math.pi / 2
+            dx, dy = math.cos(a) * (r - 1), math.sin(a) * (r - 1)
+            pygame.draw.line(surf, col, (cx - dx, cy - dy), (cx + dx, cy + dy), width)
+    pygame.draw.circle(surf, theme.PIPE_LINE, (cx, cy), max(2, t // 12) + 1)  # hub
+    pygame.draw.circle(surf, theme.PIPE_LIGHT, (cx, cy), max(1, t // 12))
+
+
+def draw_waterworks(surf: pygame.Surface, rect: pygame.Rect) -> None:
+    """The waterworks (水道局): cream building, blue gabled roof with a white water drop, a door."""
+    t = rect.w
+    x, y = rect.topleft
+
+    def px(fx: float, fy: float) -> tuple[int, int]:
+        return x + round(fx * t), y + round(fy * t)
+
+    pygame.draw.ellipse(surf, (10, 8, 6), (*px(0.1, 0.84), round(t * 0.8), max(3, round(t * 0.12))))  # shadow
+    wall = pygame.Rect(px(0.16, 0.44), (round(t * 0.68), round(t * 0.46)))
+    pygame.draw.rect(surf, theme.WATERWORKS_WALL, wall)
+    for fx in (0.24, 0.62):  # two windows
+        pygame.draw.rect(surf, theme.WATER, (*px(fx, 0.54), max(2, round(t * 0.14)), max(2, round(t * 0.12))))
+    door = pygame.Rect(0, 0, max(3, round(t * 0.16)), max(4, round(t * 0.24)))
+    door.midbottom = wall.midbottom
+    pygame.draw.rect(surf, theme.WATERWORKS_ROOF_DARK, door)
+    pygame.draw.rect(surf, theme.PIPE_LINE, wall, 1)
+    roof = [px(0.04, 0.48), px(0.5, 0.06), px(0.96, 0.48)]
+    pygame.draw.polygon(surf, theme.WATERWORKS_ROOF, roof)
+    pygame.draw.polygon(surf, theme.WATERWORKS_ROOF_DARK, roof, 2)
+    # Water drop in the gable: round bottom + pointed top
+    cx, cy = px(0.5, 0.34)
+    dr = max(2, round(t * 0.1))
+    pygame.draw.polygon(surf, (250, 252, 255), [(cx - dr, cy), (cx, cy - round(dr * 2.2)), (cx + dr, cy)])
+    pygame.draw.circle(surf, (250, 252, 255), (cx, cy), dr)
+
+
 def draw_mohawk(surf: pygame.Surface, cx: float, base_y: float, t: float) -> None:
     """Red punk mohawk: a row of spikes standing on base_y, about t * 0.3 tall."""
     spikes, width, height = 5, t * 0.5, t * 0.3
@@ -514,6 +590,13 @@ def _draw_effect(surf: pygame.Surface, e: Effect, k: float, center: tuple[float,
         y = cy - t * 0.4 - k * t * 0.9
         surf.blit(shadow, shadow.get_rect(center=(cx + 1, y + 1)))
         surf.blit(img, img.get_rect(center=(cx, y)))
+    elif e.kind == "turn":
+        # A valve being turned: an arc sweeping around the wheel (clockwise = closing)
+        r = t * 0.42
+        a0 = e.spin * k * math.pi * 1.5
+        box = pygame.Rect(0, 0, round(2 * r), round(2 * r))
+        box.center = (round(cx), round(cy))
+        pygame.draw.arc(surf, e.color, box, a0, a0 + math.pi * 0.8, 2 if k < 0.6 else 1)
     elif e.kind == "invalid":
         s = t * 0.22
         pygame.draw.line(surf, e.color, (cx - s, cy - t * 0.55 - s), (cx + s, cy - t * 0.55 + s), 3)

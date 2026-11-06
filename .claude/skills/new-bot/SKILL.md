@@ -15,9 +15,15 @@ description: Create, run and benchmark a new LeakBots competitor bot in bots/. U
 4. **Check validity cheaply** before acting to avoid wasted turns:
    - move: `view.is_walkable(view.neighbor(d))` (the new square is auto-detected for free)
    - detect: `Action.detect()` scans all four neighbours; skip it if they are all in `view.detected`
-   - buy: `view.score >= view.cost(PowerUp.UT)` and `not view.has(PowerUp.UT)`
-   - unearth: target in bounds, `view.cell(t).surface is Surface.UNTOUCHED`, `cell.bot is None`
-   - fix: `cell.pipe_state is PipeState.BROKEN`
+   - buy: `view.me == view.waterworks_pos` (or it is `None`), `view.score >= view.cost(PowerUp.UT)`
+     and `not view.has(PowerUp.UT)`
+   - unearth: target in bounds, `view.cell(t).surface is Surface.UNTOUCHED`, `cell.bot is None`,
+     `not cell.building` (the waterworks cannot be dug)
+   - fix: `cell.pipe_state is PipeState.BROKEN` and every `n` in `view.connected_neighbors(t)` has
+     `view.cell(n).valve is False` (unearthed, valve installed and closed)
+   - install_valve: target unearthed, `cell.has_pipe`, `cell.valve is None`
+   - close_valve / open_valve: target unearthed with `cell.valve is True` / `cell.valve is False`;
+     reopen your valves after the fix (+5 each) — closed ones cost -10 at the end
    - refill: unearthed and not `PipeState.BROKEN`
    Inspect `view.last_result.message` while debugging invalid moves.
 5. **Smoke test** in the GUI: `.venv/bin/python main.py --bots <name>_bot:<Class>`.
