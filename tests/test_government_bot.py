@@ -77,6 +77,95 @@ def test_fixes_a_broken_pipe_another_bot_left_open():
     assert_clean(g, bot_id=1)
 
 
+# --- Punk upgrade -------------------------------------------------------------------------------
+class DetectBot(BaseBot):
+    """Stands still and only detects (a target for the ball and chain)."""
+
+    def act(self, view):
+        return Action.detect()
+
+
+def make_game(spawns, bots=(GovernmentBot,), **config):
+    """Like scenario(), but returns the unplayed Game so a test can change it first."""
+    cfg = GameConfig(width=5, height=5, n_leaks=1, **{"max_moves": 20, "cost_ut": 0, **config})
+    return Game(list(bots), cfg, seed=0, masks=MASKS, leaks=[LEAK], spawns=list(spawns))
+
+
+def gov_events(game, bot_id=0):
+    return [e for e in game.history if e.bot_id == bot_id]
+
+
+def test_collects_a_nearby_punk_pickup():
+    g = make_game(spawns=[(0, 4)])
+    g.cell((0, 1)).item = "punk"  # 3 steps straight up, no job known yet
+    g.punk_pos = (0, 1)
+    g.run()
+    st = g.states[0]
+    assert PowerUp.PUNK in st.upgrades and st.bonus == 10 and g.punk_pos is None
+    assert actions(g)[:4] == [ActionType.BUY] + [ActionType.MOVE] * 3  # straight there after buying UT
+    assert st.leaks_fixed == 1  # ... and still does its job afterwards
+    assert_clean(g)
+
+
+def test_never_digs_under_the_pickup():
+    g = make_game(spawns=[(2, 1)], max_moves=6)
+    g.cell(LEAK).item = "punk"  # the pickup blocks the leak square: take it first, then dig
+    g.punk_pos = LEAK
+    g.run()
+    assert PowerUp.PUNK in g.states[0].upgrades
+    assert_clean(g)
+
+
+def test_chains_the_strongest_adjacent_opponent():
+    g = make_game(spawns=[(1, 0), (0, 0), (2, 0)], bots=(GovernmentBot, DetectBot, DetectBot))
+    g.states[0].upgrades.add(PowerUp.PUNK)
+    g.states[1].score, g.states[2].score = 5, 20  # the bot on the right leads
+    event = g.step()
+    assert event.action == Action.chain(Dir.RIGHT) and event.result.success
+    assert g.states[2].chained_left == 100 and g.states[1].chained_left == 0
+
+
+def test_finishes_its_own_hole_before_chaining():
+    g = make_game(spawns=[(2, 1), (3, 1)], bots=(GovernmentBot, DetectBot))
+    for _ in range(3 * 2):  # BUY, DETECT, UNEARTH (each followed by a move of the DetectBot)
+        g.step()
+    assert g.cell(LEAK).surface is Surface.UNEARTHED
+    g.states[0].upgrades.add(PowerUp.PUNK)  # becomes a punk with its own hole open
+    g.run()
+    t = ActionType
+    assert actions(g)[:6] == [t.BUY, t.DETECT, t.UNEARTH, t.FIX, t.REFILL, t.CHAIN]
+    assert g.states[1].chained_left > 0
+    assert_clean(g)
+
+
+def test_chained_bot_still_finishes_its_jobs():
+    g = make_game(spawns=[(4, 0)], max_moves=40)
+    g.states[0].chained_left = 100
+    g.run()
+    st = g.states[0]
+    assert st.leaks_fixed == 1 and g.cell(LEAK).surface is Surface.UNTOUCHED
+    assert_clean(g)
+    # It keeps dragging one way: every drag is followed by the step in the same direction
+    events = gov_events(g)
+    drags = [i for i, e in enumerate(events) if e.result.message.startswith("dragging")]
+    assert drags
+    for i in drags:
+        nxt = events[i + 1]
+        assert nxt.action == events[i].action and nxt.from_pos != nxt.target and not nxt.result.message
+
+
+@pytest.mark.parametrize("chained, moves_left, digs", [(0, 4, True), (100, 4, False), (100, 5, True)])
+def test_chained_travel_counts_two_moves_per_step(chained, moves_left, digs):
+    g = make_game(spawns=[(2, 0)], cost_ut=999)  # no UT purchase: only the travel math counts
+    g.bots[0].leaks = {LEAK}  # the bot already knows the leak: 1 step to (2, 1), then 3 moves of digging
+    g.states[0].chained_left = chained
+    g.turn = g.config.max_moves - moves_left
+    g.run()
+    assert (ActionType.UNEARTH in actions(g)) is digs
+    assert g.states[0].leaks_fixed == digs
+    assert_clean(g)
+
+
 def test_same_seed_same_round():
     a, b = (Game([GovernmentBot, RandomBot], seed=11).run() for _ in range(2))
     assert [(e.bot_id, e.action) for e in a.history] == [(e.bot_id, e.action) for e in b.history]
@@ -139,3 +228,10 @@ def test_duels_run_clean(opponent):
         assert sum(st.score for st in states) / DUEL_ROUNDS > 100
     if opponent is RandomBot:
         assert all(g.winners() == [0] for g in games)
+    else:  # the punk rules are exercised: one bot always takes the pickup, and chains happen
+        assert all(any(PowerUp.PUNK in st.upgrades for st in g.states) for g in games)
+        assert any(st.chain_used for g in games for st in g.states)
+
+
+def test_collects_the_punk_pickup_in_most_rounds(solo):
+    assert sum(PowerUp.PUNK in g.states[0].upgrades for g in solo) >= 0.8 * ROUNDS
