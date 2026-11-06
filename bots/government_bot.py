@@ -7,6 +7,10 @@ Strategy:
     Phase 2  Keep scanning along the pipes. With UT every scan also reports leaks; a reported
              leak is dug up (+5), fixed (+15) and refilled straight away.
     Always   Fix broken pipes other bots left open (+15) and never leave an own hole open.
+    Punk     From move 200 a punk pickup lies on the map: if it is close, the bot detours to
+             collect it (+10, denied to the opponents). As a punk it puts its one ball and chain
+             on the strongest adjacent opponent. When chained itself, every step costs two
+             moves: it keeps dragging the same way and plans its jobs with the doubled cost.
 
 How it chooses where to scan: every square worth scanning gets a value (how likely it holds
 pipe, plus a leak bonus once UT is bought). A breadth-first search over walkable squares then
@@ -21,7 +25,7 @@ Benchmark: python simulate.py --bots government_bot random_bot --rounds 100 --se
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 from leakbots import Action, ActionType, BaseBot, BotView, Dir, PipeState, Pos, PowerUp, Surface
 
@@ -34,6 +38,11 @@ BRANCH_CHANCE = 0.1  # beside a pipe square whose two links are known: only a si
 LEAK_CHECK_VALUE = 0.5
 
 DIG_MOVES = 3  # unearth + fix + refill: never start a dig that cannot be refilled in time
+
+# Punk pickup: +10 is about what 10-15 moves of scanning earn (well under one point per move,
+# since most squares around the bot are already scanned by move 200). Taking it also denies it
+# to the opponents (and their ball and chain), so a detour of up to 15 moves is worth it.
+PUNK_RANGE = 15
 
 
 class GovernmentBot(BaseBot):
@@ -59,17 +68,29 @@ class GovernmentBot(BaseBot):
         self._remember(view)
         jobs = self._jobs(view)
 
-        # 1. Work on a hole or reported leak right next to the bot
+        # 1. As a punk: chain the strongest adjacent opponent (an own open hole is finished first)
+        action = self._chain(view)
+        if action is not None:
+            return action
+
+        # 2. Work on a hole or reported leak right next to the bot
         action = self._work_next_to_me(view, jobs)
         if action is not None:
             return action
 
-        # 2. Phase switch: buy the ultrasonic test as soon as it is affordable
+        # 3. Phase switch: buy the ultrasonic test as soon as it is affordable
         if not view.has(PowerUp.UT) and view.score >= view.cost(PowerUp.UT):
             return Action.buy(PowerUp.UT)
 
-        # 3. Walk to the nearest job, otherwise 4. scan the most promising squares
-        return self._go_to_work(view, jobs) or self._explore(view)
+        # 4. Walk to the punk pickup if it is close (and nearer than the next job),
+        #    else 5. walk to the nearest job, otherwise 6. scan the most promising squares
+        work = self._path_to_work(view, jobs)
+        punk = self._path_to_punk(view)
+        if punk is not None and (work is None or punk[0] < work[0]):
+            return Action.move(punk[1])
+        if work is not None:
+            return Action.move(work[1])
+        return self._explore(view)
 
     # --- Memory ----------------------------------------------------------------------------
     def _remember(self, view: BotView) -> None:
@@ -117,8 +138,13 @@ class GovernmentBot(BaseBot):
                     jobs[pos] = "fix"  # +15, whoever dug it
                 elif pos in self.my_holes:
                     jobs[pos] = "refill"  # own hole: avoid the end-of-round penalty
-            elif pos in self.leaks and view.moves_left >= DIG_MOVES and info.bot in (None, view.bot_id):
-                jobs[pos] = "dig"  # if the bot stands on it, _go_to_work steps off first
+            elif (
+                pos in self.leaks
+                and view.moves_left >= DIG_MOVES
+                and info.bot in (None, view.bot_id)
+                and info.item is None  # the punk pickup blocks digging until someone takes it
+            ):
+                jobs[pos] = "dig"  # if the bot stands on it, _path_to_work steps off first
         return jobs
 
     def _work_next_to_me(self, view: BotView, jobs: dict[Pos, str]) -> Action | None:
@@ -133,19 +159,36 @@ class GovernmentBot(BaseBot):
                 return Action.unearth(d)
         return None
 
-    def _go_to_work(self, view: BotView, jobs: dict[Pos, str]) -> Action | None:
-        """Step towards the nearest square next to a job (if the job still fits in the round)."""
+    def _path_to_work(self, view: BotView, jobs: dict[Pos, str]) -> tuple[int, Dir] | None:
+        """(travel moves, first step) to the cheapest square next to a job that still fits."""
         if not jobs:
             return None
-        for pos, dist, first in self._reachable(view):
-            if dist == 0:
-                continue  # the bot's own square: jobs next to it were handled by _work_next_to_me
-            for _, nxt in self.around[pos]:
-                kind = jobs.get(nxt)
-                needed = DIG_MOVES if kind == "dig" else 1
-                if kind is not None and dist + needed <= view.moves_left:
-                    return Action.move(first)
-        return None
+
+        def moves_after_arrival(pos: Pos) -> int | None:
+            needs = [DIG_MOVES if jobs[nxt] == "dig" else 1 for _, nxt in self.around[pos] if nxt in jobs]
+            return min(needs, default=None)
+
+        return self._cheapest_path(view, moves_after_arrival, view.moves_left)
+
+    # --- Punk upgrade ----------------------------------------------------------------------
+    def _path_to_punk(self, view: BotView) -> tuple[int, Dir] | None:
+        """(travel moves, first step) to the punk pickup if it lies within PUNK_RANGE moves."""
+        target = view.punk_pos
+        if target is None:
+            return None
+        return self._cheapest_path(view, lambda pos: 0 if pos == target else None, PUNK_RANGE)
+
+    def _chain(self, view: BotView) -> Action | None:
+        """Ball and chain on the strongest adjacent opponent that is not chained yet."""
+        if not view.can_chain or self.my_holes:
+            return None  # an own open hole (dig, fix, refill) is finished first
+        at = {pos: bot_id for bot_id, pos in view.bot_positions().items() if bot_id != view.bot_id}
+        targets = [
+            (view.scores[at[nxt]], -at[nxt], d)  # highest score first, then the lowest bot id
+            for d, nxt in self.around[view.me]
+            if nxt in at and view.chained_moves(at[nxt]) == 0
+        ]
+        return Action.chain(max(targets)[2]) if targets else None
 
     # --- Exploration -----------------------------------------------------------------------
     def _explore(self, view: BotView) -> Action:
@@ -163,12 +206,13 @@ class GovernmentBot(BaseBot):
 
         best_rate, best = 0.0, Action.detect()
         for pos, dist, first in self._reachable(view):
-            if dist and top / dist <= best_rate:
-                break  # nothing farther away can beat the best plan
+            if dist and top / self._travel(view, dist, view.dragging) <= best_rate:
+                break  # nothing farther away can beat the best plan (travel never shrinks)
+            cost = self._travel(view, dist, first)  # moves to walk there (2 per step when chained)
             own = values.get(pos, 0.0) if dist else 0.0  # stepping onto pos auto-detects it
-            if dist and own / dist > best_rate:
-                best_rate, best = own / dist, Action.move(first)
-            rate = (own + detect_gain.get(pos, 0.0)) / (dist + 1)  # walk to pos, then detect
+            if dist and own / cost > best_rate:
+                best_rate, best = own / cost, Action.move(first)
+            rate = (own + detect_gain.get(pos, 0.0)) / (cost + 1)  # walk to pos, then detect
             if rate > best_rate:
                 best_rate, best = rate, Action.move(first) if dist else Action.detect()
         return best
@@ -216,15 +260,61 @@ class GovernmentBot(BaseBot):
         return values
 
     # --- Pathfinding -----------------------------------------------------------------------
+    @staticmethod
+    def _travel(view: BotView, dist: int, first: Dir | None) -> int:
+        """Moves needed to walk dist steps starting with `first`, ball and chain included.
+
+        A chained bot needs two moves per step (drag, then step) until the chain wears off; a
+        drag already started towards `first` makes that first step cost one move only.
+        A MOVE may therefore leave ``view.me`` unchanged, so plans are rebuilt every move.
+        """
+        chained = view.chained_moves()
+        if not chained or not dist:
+            return dist
+        moves = 0
+        if first is not None and first is view.dragging:
+            moves, dist, chained = 1, dist - 1, chained - 1  # the drag is done: this move steps
+        slow = min(dist, (chained + 1) // 2)  # steps started while still chained cost two moves
+        return moves + 2 * slow + (dist - slow)
+
+    def _cheapest_path(
+        self, view: BotView, moves_after: Callable[[Pos], int | None], budget: int
+    ) -> tuple[int, Dir] | None:
+        """(travel moves, first step) to the cheapest goal square, or None if none fits.
+
+        ``moves_after(pos)`` is None for non-goal squares, else the moves still needed there;
+        travel + those moves must fit into ``budget``. The bot's own square never counts.
+        """
+        best: tuple[int, Dir] | None = None
+        for pos, dist, first in self._reachable(view):
+            if not dist:
+                continue
+            if best is not None and self._travel(view, dist, view.dragging) > best[0]:
+                break  # every farther square costs more moves
+            needed = moves_after(pos)
+            if needed is None:
+                continue
+            cost = self._travel(view, dist, first)
+            if cost + needed <= budget and (best is None or cost < best[0]):
+                best = (cost, first)
+        return best
+
     def _reachable(self, view: BotView) -> Iterator[tuple[Pos, int, Dir | None]]:
-        """Breadth-first search over walkable squares: yield (square, distance, first step)."""
+        """Breadth-first search over walkable squares: yield (square, distance, first step).
+
+        While dragging, the first step in the dragged direction is searched first, so ties keep
+        the bot moving the same way (flipping directions every move, it would never step).
+        """
         start = view.me
         yield start, 0, None
         seen = {start}
         queue = deque([(start, 0, None)])
         while queue:
             pos, dist, first = queue.popleft()
-            for d, nxt in self.around[pos]:
+            around = self.around[pos]
+            if pos == start and view.dragging is not None:
+                around = sorted(around, key=lambda step: step[0] is not view.dragging)
+            for d, nxt in around:
                 if nxt not in seen and view.is_walkable(nxt):
                     seen.add(nxt)
                     step = first or d
