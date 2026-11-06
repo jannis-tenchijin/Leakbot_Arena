@@ -1,10 +1,16 @@
-"""Pygame front end: live board, controls, scoreboard and the threaded 100-game simulation."""
+"""Pygame front end: live board, controls, scoreboard and the 100-game simulation.
+
+Runs on the desktop and in the browser (pygbag/WebAssembly). Browser constraints: the main
+loop must be async and yield every frame, and there are no threads, so the simulation is
+spread over frames instead of running in the background.
+"""
 
 from __future__ import annotations
 
+import asyncio
 import random
 import shutil
-import threading
+import sys
 import time
 from collections.abc import Sequence
 from pathlib import Path
@@ -15,15 +21,17 @@ from ..bot_api import BaseBot
 from ..config import DEFAULT_CONFIG, GameConfig
 from ..game import Game
 from ..loader import SPRITES_DIR, sprite_path
-from ..simulation import SimulationResult, run_games, seat_labels
+from ..simulation import SimulationResult, SimulationRunner, seat_labels
 from . import theme
 from .render import BoardRenderer, draw_robot
 from .widgets import Button, Slider, draw_progress
 
+WEB = sys.platform == "emscripten"  # running in a browser via pygbag
 MARGIN = 24
 SIDEBAR_W = 340
 MAX_RATE = 500  # moves per second at the right end of the slider (before "MAX")
 FRAME_STEP_BUDGET = 0.012  # seconds per frame the engine may use in MAX mode
+SIM_FRAME_BUDGET = 0.02  # seconds per frame spent on simulated games
 
 
 class App:
@@ -64,12 +72,9 @@ class App:
         self.card_rects: list[pygame.Rect] = []
         self._toast = ("", 0.0)
 
-        # Simulation (runs in a background thread)
-        self._sim_thread: threading.Thread | None = None
-        self.sim_progress = (0, 0)
+        # Simulation (a few games per frame, see SIM_FRAME_BUDGET)
+        self.sim: SimulationRunner | None = None
         self.sim_result: SimulationResult | None = None
-        self.sim_seed = 0
-        self._sim_stop = False
 
         self.sprites = [sprite_path(cls) for cls in self.bot_classes]
         self.new_game(seed)
@@ -129,29 +134,24 @@ class App:
         if self.game.over:
             self.playing = False
 
+        # Simulated games share the frame with live play; slow frames (throttled tab) get more time
+        if self.simulating:
+            self.sim.advance(min(0.25, max(SIM_FRAME_BUDGET, dt * 0.5)))
+            if self.sim.done:
+                self.sim_result = self.sim.result()
+
     # --- Simulation -------------------------------------------------------------------------
     @property
     def simulating(self) -> bool:
-        return self._sim_thread is not None and self._sim_thread.is_alive()
+        return self.sim is not None and not self.sim.done
 
     def toggle_simulation(self) -> None:
         if self.simulating:
-            self._sim_stop = True
+            self.sim.cancel()
+            self.sim_result = self.sim.result()
             return
-        self._sim_stop = False
         self.sim_result = None
-        self.sim_seed = random.randrange(1_000_000)
-        self.sim_progress = (0, self.sim_games)
-        classes, config, n, seed = list(self.bot_classes), self.config, self.sim_games, self.sim_seed
-
-        def work() -> None:
-            def progress(done: int, total: int) -> None:
-                self.sim_progress = (done, total)
-
-            self.sim_result = run_games(classes, n, seed, config, progress, lambda: self._sim_stop)
-
-        self._sim_thread = threading.Thread(target=work, daemon=True)
-        self._sim_thread.start()
+        self.sim = SimulationRunner(self.bot_classes, self.sim_games, random.randrange(1_000_000), self.config)
 
     # --- Sprites ----------------------------------------------------------------------------
     def handle_drop(self, file: str, bot_id: int | None = None) -> None:
@@ -237,7 +237,7 @@ class App:
                 pygame.K_UP: lambda: self.slider.nudge(0.05),
                 pygame.K_DOWN: lambda: self.slider.nudge(-0.05),
             }
-            if event.key == pygame.K_ESCAPE:
+            if event.key == pygame.K_ESCAPE and not WEB:  # closing a browser tab is the web "quit"
                 self.running = False
             elif event.key in keys:
                 keys[event.key]()
@@ -254,6 +254,11 @@ class App:
 
     # --- Main loop --------------------------------------------------------------------------
     def run(self) -> None:
+        """Desktop entry: block until the window closes."""
+        asyncio.run(self.run_async())
+
+    async def run_async(self) -> None:
+        """Frame loop. Yields to the event loop every frame, which the browser build requires."""
         while self.running:
             dt = self.clock.tick(60) / 1000
             for event in pygame.event.get():
@@ -262,7 +267,7 @@ class App:
             self.update(dt, now)
             self.draw(now)
             pygame.display.flip()
-        self._sim_stop = True
+            await asyncio.sleep(0)
         pygame.quit()
 
     # --- Drawing ----------------------------------------------------------------------------
@@ -329,6 +334,8 @@ class App:
         msg, until = self._toast
         if msg and now < until:
             self._text(msg, (x, hint_top + 4), 12, theme.GOOD, bold=True)
+        elif WEB:
+            self._text("Sprites: commit bots/sprites/<ClassName>.png", (x, hint_top + 4), 11, theme.MUTED)
         else:
             self._text("Drag a PNG onto a bot card to set its sprite", (x, hint_top + 4), 11, theme.MUTED)
         self._text("SPACE play  S step  R restart  N new map", (x, hint_top + 22), 11, theme.MUTED)
@@ -375,9 +382,9 @@ class App:
         x, y = rect.x + 10, rect.y + 8
         self._text("SIMULATION", (x, y), 12, theme.GOOD, bold=True)
         if self.simulating:
-            done, total = self.sim_progress
+            done, total = self.sim.played, self.sim.n_games
             draw_progress(self.screen, pygame.Rect(x, y + 24, rect.w - 20, 16), done / max(1, total))
-            self._text(f"{done}/{total} games  (seeds {self.sim_seed}+)", (x, y + 46), 12, theme.TEXT)
+            self._text(f"{done}/{total} games  (seeds {self.sim.seed}+)", (x, y + 46), 12, theme.TEXT)
             return
         res = self.sim_result
         if res is None:

@@ -5,7 +5,7 @@ import time
 from bots.random_bot import RandomBot
 from leakbots.config import DEFAULT_CONFIG
 from leakbots.loader import load_bot
-from leakbots.simulation import run_games, seat_labels
+from leakbots.simulation import SimulationRunner, run_games, seat_labels
 
 
 def test_hundred_games_fast_and_consistent():
@@ -36,6 +36,16 @@ def test_wins_add_up_in_multiplayer():
 def test_stop_flag_cancels():
     result = run_games([RandomBot], n_games=50, should_stop=lambda: True)
     assert result.cancelled and result.games == 0
+
+
+def test_runner_matches_run_games_and_respects_budget():
+    runner = SimulationRunner([RandomBot], n_games=12, seed=9)
+    runner.advance(0.0)  # zero budget still plays exactly one game
+    assert runner.played == 1
+    while not runner.done:
+        runner.advance(0.01)
+    direct = run_games([RandomBot], n_games=12, seed=9)
+    assert runner.result().seats[0].scores == direct.seats[0].scores
 
 
 def test_loader_resolves_specs():

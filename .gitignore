@@ -1,3 +1,6 @@
+# Build output (web build lands in build/leakbots-arena/build/web)
+build/
+
 # Python
 __pycache__/
 *.py[cod]

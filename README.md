@@ -3,6 +3,9 @@
 Program an autonomous bot that hunts for buried water leaks. Bots share a grid, take turns,
 detect and dig up pipes, fix leaks — and refill their holes before the final whistle.
 
+**▶ Play in the browser: [jannis-tenchijin.github.io/leakbots-arena](https://jannis-tenchijin.github.io/leakbots-arena/)**
+— nothing to install. 1 vs 1: [`?bots=random_bot,random_bot`](https://jannis-tenchijin.github.io/leakbots-arena/?bots=random_bot,random_bot)
+
 ![LeakBots Arena](docs/screenshot.png)
 
 ## Quick start
@@ -118,11 +121,28 @@ Key parts of the `view` (full list in [leakbots/bot_api.py](leakbots/bot_api.py)
 
 Fair play: only use the public members of `view` (nothing starting with `_`).
 
+## Browser version (GitHub Pages)
+
+The same Python code runs in the browser via [pygbag](https://pypi.org/project/pygbag/)
+(pygame compiled to WebAssembly). Every push to `main` runs the tests, builds the web version
+and publishes it to GitHub Pages (`.github/workflows/pages.yml`).
+
+- Pick bots and map with URL parameters: `?bots=random_bot,my_bot:MyBot&seed=42`.
+  Only bots committed to `bots/` are available online.
+- Sprites: commit `bots/sprites/<ClassName>.png` (drag-and-drop works on the desktop only).
+- Build and test locally:
+  ```bash
+  pip install -r requirements-web.txt
+  python tools/build_web.py --serve       # then open http://localhost:8000
+  ```
+  The first load downloads the Python runtime (a few MB) from pygbag's CDN.
+
 ## Project layout
 
 ```
-main.py              GUI entry point
+main.py              GUI entry point (desktop and browser)
 simulate.py          headless benchmark CLI
+tools/build_web.py   browser build (pygbag) used by the Pages workflow
 leakbots/            engine (pure Python, no pygame) + gui/ (pygame viewer)
   config.py          GameConfig: grid size, leaks, rounds, point values
   pipes.py           random pipe network generator

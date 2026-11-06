@@ -66,11 +66,24 @@ def test_keyboard_controls(app):
     assert app.playing
 
 
-def test_simulation_thread(app):
+def test_simulation_runs_across_frames(app):
     app.toggle_simulation()
-    app._sim_thread.join(timeout=30)
+    assert app.simulating
+    app.draw(4.0)  # progress bar path
+    for _ in range(200):
+        frames(app, 1)
+        if not app.simulating:
+            break
     assert app.sim_result is not None and app.sim_result.games == 5
     app.draw(5.0)  # results panel path
+
+
+def test_simulation_cancel(app):
+    app.sim_games = 10_000
+    app.toggle_simulation()
+    frames(app, 2)
+    app.toggle_simulation()  # second press cancels
+    assert not app.simulating and app.sim_result.cancelled
 
 
 def test_png_drop_sets_sprite(app, tmp_path, monkeypatch):

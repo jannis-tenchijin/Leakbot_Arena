@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import statistics
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -27,7 +26,8 @@ class SeatStats:
 
     def mean(self, attr: str) -> float:
         values = getattr(self, attr)
-        return statistics.fmean(values) if values else 0.0
+        # Plain mean: the browser build's trimmed stdlib has no `statistics` module
+        return sum(values) / len(values) if values else 0.0
 
 
 @dataclass
@@ -39,7 +39,7 @@ class SimulationResult:
     cancelled: bool = False
 
     def summary_lines(self) -> list[str]:
-        """Plain-text table used by the CLI and the GUI results panel."""
+        """Plain-text table used by the CLI."""
         lines = [f"{self.games} games in {self.seconds:.1f}s" + (" (cancelled)" if self.cancelled else "")]
         for s in self.seats:
             if not s.scores:
@@ -61,24 +61,49 @@ def seat_labels(bot_classes: Sequence[type[BaseBot]]) -> list[str]:
     return [f"{n} #{i + 1}" if names.count(n) > 1 else n for i, n in enumerate(names)]
 
 
-def run_games(
-    bot_classes: Sequence[type[BaseBot]],
-    n_games: int = 100,
-    seed: int | None = None,
-    config: GameConfig = DEFAULT_CONFIG,
-    progress: Callable[[int, int], None] | None = None,
-    should_stop: Callable[[], bool] | None = None,
-) -> SimulationResult:
-    """Play n_games fresh games (new map each time). Seeds are seed, seed+1, ... if given."""
-    seats = [SeatStats(label) for label in seat_labels(bot_classes)]
-    start = time.perf_counter()
-    played = 0
-    for i in range(n_games):
-        if should_stop and should_stop():
-            break
-        game = Game(bot_classes, config, None if seed is None else seed + i).run()
+class SimulationRunner:
+    """Plays a batch of games incrementally.
+
+    The GUI calls ``advance(budget)`` once per frame, so a batch never freezes the window and
+    no threads are needed (browsers running the WebAssembly build have none).
+    Seeds are seed, seed+1, ... if a seed is given.
+    """
+
+    def __init__(
+        self,
+        bot_classes: Sequence[type[BaseBot]],
+        n_games: int = 100,
+        seed: int | None = None,
+        config: GameConfig = DEFAULT_CONFIG,
+    ) -> None:
+        self.bot_classes = list(bot_classes)
+        self.n_games = n_games
+        self.seed = seed
+        self.config = config
+        self.seats = [SeatStats(label) for label in seat_labels(self.bot_classes)]
+        self.played = 0
+        self.cancelled = False
+        self._start: float | None = None
+        self._end: float | None = None
+
+    @property
+    def done(self) -> bool:
+        return self.cancelled or self.played >= self.n_games
+
+    def cancel(self) -> None:
+        self.cancelled = True
+        self._mark_end()
+
+    def play_one(self) -> None:
+        """Play the next game of the batch and record it."""
+        if self.done:
+            return
+        if self._start is None:
+            self._start = time.perf_counter()
+        seed = None if self.seed is None else self.seed + self.played
+        game = Game(self.bot_classes, self.config, seed).run()
         winners = game.winners()
-        for bot_id, (seat, st) in enumerate(zip(seats, game.states)):
+        for bot_id, (seat, st) in enumerate(zip(self.seats, game.states)):
             seat.scores.append(st.score)
             seat.pipes_detected.append(st.pipes_detected)
             seat.leaks_found.append(st.leaks_found)
@@ -87,7 +112,42 @@ def run_games(
             seat.invalid.append(st.invalid)
             if bot_id in winners:
                 seat.wins += 1 / len(winners)
-        played += 1
+        self.played += 1
+        if self.done:
+            self._mark_end()
+
+    def advance(self, budget: float) -> None:
+        """Play games for roughly ``budget`` seconds (always at least one game)."""
+        start = time.perf_counter()
+        self.play_one()
+        while not self.done and time.perf_counter() - start < budget:
+            self.play_one()
+
+    def result(self) -> SimulationResult:
+        start = self._start or time.perf_counter()
+        end = self._end or time.perf_counter()
+        return SimulationResult(self.seats, self.played, end - start, self.seed, cancelled=self.played < self.n_games)
+
+    def _mark_end(self) -> None:
+        if self._end is None:
+            self._end = time.perf_counter()
+
+
+def run_games(
+    bot_classes: Sequence[type[BaseBot]],
+    n_games: int = 100,
+    seed: int | None = None,
+    config: GameConfig = DEFAULT_CONFIG,
+    progress: Callable[[int, int], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
+) -> SimulationResult:
+    """Play n_games fresh games (new map each time) in one go and return the statistics."""
+    runner = SimulationRunner(bot_classes, n_games, seed, config)
+    while not runner.done:
+        if should_stop and should_stop():
+            runner.cancel()
+            break
+        runner.play_one()
         if progress:
-            progress(played, n_games)
-    return SimulationResult(seats, played, time.perf_counter() - start, seed, cancelled=played < n_games)
+            progress(runner.played, n_games)
+    return runner.result()

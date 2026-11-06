@@ -1,0 +1,2 @@
+# Only needed to build the browser version (python tools/build_web.py)
+pygbag==0.9.3

@@ -10,6 +10,20 @@ leaking water pipes on a grid. Python 3.10+, pygame-ce for the viewer, pytest fo
 - GUI: `.venv/bin/python main.py [--bots random_bot random_bot] [--seed N]`
 - Benchmark: `.venv/bin/python simulate.py --bots random_bot --games 100 --seed 1`
 - Headless render (screenshots, CI): set `SDL_VIDEODRIVER=dummy` before importing pygame.
+- Web build: `.venv/bin/python tools/build_web.py` (needs `requirements-web.txt`); output in
+  `build/leakbots-arena/build/web`. Preview with the `web` config in `.claude/launch.json` and
+  open **http://127.0.0.1:8765** — on `localhost` pygbag looks for its dev proxy and fails.
+- Deploy: push to `main`; `.github/workflows/pages.yml` tests, builds and publishes to Pages.
+
+## Browser (pygbag) constraints — the web build breaks if these are ignored
+
+- Runtime is CPython 3.12 in WebAssembly with a trimmed stdlib: no threads, no `statistics`,
+  no system fonts. Check new stdlib imports in the browser before relying on them.
+- The frame loop must stay `async` and `await asyncio.sleep(0)` every frame (`App.run_async`).
+- Long work (e.g. simulations) runs in per-frame slices (`SimulationRunner.advance`), never in
+  a thread or a blocking loop inside the GUI.
+- `main.py` must keep `import pygame` under `if WEB:` so pygbag's loader fetches pygame.
+- Desktop-only features (drag-and-drop, ESC to quit) must be guarded by `WEB` in `gui/app.py`.
 
 ## Architecture rules
 

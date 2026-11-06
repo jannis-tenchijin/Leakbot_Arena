@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pygame
 
 # Arcade night background + panels
@@ -55,12 +57,22 @@ def reset_fonts() -> None:
     _font_cache.clear()
 
 
+def _default_font(size: int, bold: bool) -> pygame.font.Font:
+    # pygame's built-in font renders at ~0.69x its nominal size, so scale it up to match
+    f = pygame.font.Font(None, round(size * 1.45))
+    f.set_bold(bold)
+    return f
+
+
 def font(size: int, bold: bool = False) -> pygame.font.Font:
-    """Cached monospace font (falls back to pygame's default font)."""
+    """Cached monospace font; the browser build has no system fonts and uses pygame's default."""
     key = (size, bold)
     if key not in _font_cache:
-        try:
-            _font_cache[key] = pygame.font.SysFont(_MONO, size, bold=bold)
-        except Exception:
-            _font_cache[key] = pygame.font.Font(None, size + 4)
+        if sys.platform == "emscripten":
+            _font_cache[key] = _default_font(size, bold)
+        else:
+            try:
+                _font_cache[key] = pygame.font.SysFont(_MONO, size, bold=bold)
+            except Exception:
+                _font_cache[key] = _default_font(size, bold)
     return _font_cache[key]
