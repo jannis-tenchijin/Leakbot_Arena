@@ -170,3 +170,12 @@ def test_png_drop_sets_sprite(app, tmp_path, monkeypatch):
 
     app.handle_drop(str(tmp_path / "notes.txt"), bot_id=0)
     assert "png" in app._toast[0].lower()
+
+
+@pytest.mark.parametrize("n", [5, 6, 8])
+def test_big_battle_royale_cards_stay_above_the_panel(n):
+    a = app_module.App([RandomBot] * n, seed=1, sim_rounds=5)
+    a.draw(1.0)
+    panel_top = a.screen.get_height() - 58 - 190
+    assert len(a.card_rects) == n and a.card_rects[-1].bottom <= panel_top
+    pygame.quit()

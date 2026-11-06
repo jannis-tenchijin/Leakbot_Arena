@@ -539,14 +539,15 @@ class App:
         sim_h = self.help_box_height() if self.manual else 166 if len(self.bot_classes) <= 2 else 190
         self._text(self.t("scoreboard"), (x, top), 12, theme.MUTED, bold=True)
         card_area = hint_top - sim_h - (top + 20)
-        card_h = max(24, min(CARD_MAX_H, card_area // len(self.bot_classes) - 6))
+        gap = 6 if len(self.bot_classes) <= 5 else 2  # 6-8 bots: slim one-line cards
+        card_h = max(16, min(CARD_MAX_H, card_area // len(self.bot_classes) - gap))
         self.card_rects = []
         y = top + 20
         for bot_id in range(len(self.bot_classes)):
             rect = pygame.Rect(x, y, w, card_h)
             self.card_rects.append(rect)
             self._draw_card(rect, bot_id)
-            y += card_h + 6
+            y += card_h + gap
         panel = pygame.Rect(x, hint_top - sim_h, w, sim_h - 8)
         if self.manual:
             self._draw_manual_help(panel)
@@ -573,6 +574,12 @@ class App:
         pygame.draw.rect(self.screen, theme.PANEL, rect, border_radius=6)
         edge = color if active else theme.ACCENT if bot_id == self.selected_bot else theme.PANEL_EDGE
         pygame.draw.rect(self.screen, edge, rect, width=2, border_radius=6)
+
+        if rect.h < 24:  # slim card (6-8 bots): name, badges and score on one line
+            name = self._text(self.labels[bot_id], (rect.x + 10, rect.y + 2), 12, color, bold=True)
+            self._draw_badges(st.upgrades, name.right + 4, rect.y + 1, st.chained_left)
+            self._text(str(st.score), (rect.right - 10, rect.y + 1), 13, theme.TEXT, bold=True, right=True)
+            return
 
         # Portrait: uploaded sprite or the default robot
         portrait = min(rect.h - 12, 44)
