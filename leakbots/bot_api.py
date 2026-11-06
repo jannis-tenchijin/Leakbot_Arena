@@ -32,6 +32,7 @@ class CellInfo:
     pipe_dirs: frozenset[Dir]  # directions a revealed pipe runs (empty if unknown)
     bot: int | None  # id of the bot standing here, if any
     revealed: bool = False  # unearthed now or earlier: stays known after a refill
+    item: str | None = None  # game object lying here ("punk" pickup), visible to everyone
 
     @property
     def walkable(self) -> bool:
@@ -143,8 +144,29 @@ class BotView:
         return self._game.config.power_up_cost(power_up)
 
     def upgrades_of(self, bot_id: int) -> frozenset[PowerUp]:
-        """Power-ups another bot has bought (public: purchases are announced)."""
+        """Power-ups another bot has bought or collected (public: they are announced)."""
         return frozenset(self._game._states[bot_id].upgrades)
+
+    # --- Punk upgrade --------------------------------------------------------------------
+    @property
+    def punk_pos(self) -> Pos | None:
+        """Where the punk pickup lies (public), None before it appears or after it is taken."""
+        return self._game.punk_pos
+
+    @property
+    def can_chain(self) -> bool:
+        """You are a punk and still have your one ball and chain for this round."""
+        state = self._game._states[self._bot_id]
+        return PowerUp.PUNK in state.upgrades and not state.chain_used
+
+    def chained_moves(self, bot_id: int | None = None) -> int:
+        """Moves a bot (default: you) still drags a ball and chain; 0 = free. Public."""
+        return self._game._states[self._bot_id if bot_id is None else bot_id].chained_left
+
+    @property
+    def dragging(self) -> Dir | None:
+        """While chained: the direction your ball is already dragged; MOVE that way steps now."""
+        return self._game._states[self._bot_id].dragging
 
     # --- Map ---------------------------------------------------------------------------
     @property
@@ -173,8 +195,9 @@ class BotView:
                 dirs_from_mask(c.pipe_mask) if show_dirs else frozenset(),
                 c.occupant,
                 revealed=True,
+                item=c.item,
             )
-        return CellInfo(pos, c.surface, None, None, frozenset(), c.occupant)
+        return CellInfo(pos, c.surface, None, None, frozenset(), c.occupant, item=c.item)
 
     def surface(self, pos: Pos) -> Surface:
         """Fast shortcut for ``cell(pos).surface``."""

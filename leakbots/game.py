@@ -13,7 +13,19 @@ from types import MappingProxyType
 
 from .bot_api import ActionResult, BaseBot, BotView, SatelliteReading
 from .config import DEFAULT_CONFIG, GameConfig
-from .model import Action, ActionType, Cell, Dir, PipeState, Pos, PowerUp, Surface, dirs_from_mask
+from .model import (
+    BUYABLE,
+    PUNK_ITEM,
+    Action,
+    ActionType,
+    Cell,
+    Dir,
+    PipeState,
+    Pos,
+    PowerUp,
+    Surface,
+    dirs_from_mask,
+)
 from .pipes import generate_pipe_masks, pick_leaks, pick_risk_grades
 
 
@@ -28,6 +40,10 @@ class BotState:
     leaks_fixed: int = 0
     open_holes: int = 0  # pipe holes charged at the end of the round
     spent: int = 0  # points spent on power-ups
+    bonus: int = 0  # points from pickups (punk upgrade)
+    chain_used: bool = False  # punk: the one ball and chain of the round has been placed
+    chained_left: int = 0  # moves this bot still drags a ball and chain (0 = free)
+    dragging: Dir | None = None  # chained: direction of the step it has started dragging toward
     invalid: int = 0
     actions: int = 0
     last_scored_turn: int = -1
@@ -114,6 +130,8 @@ class Game:
 
         self.turn = 0  # total actions taken so far
         self.over = False
+        self.punk_pos: Pos | None = None  # where the punk pickup lies (once it has appeared)
+        self.punk_spawned = config.punk_spawn_move == 0  # 0 disables the pickup
         self.history: list[MoveEvent] = []
         # Auto-detect every spawn square before the hooks run, so bots already see it there
         for bot_id, state in enumerate(self._states):
@@ -189,9 +207,12 @@ class Game:
         """Let the bot whose turn it is make one move. Returns None once the round is over."""
         if self.over:
             return None
+        if not self.punk_spawned and self.move + 1 >= self.config.punk_spawn_move:
+            self._spawn_punk()  # appears at the start of move number punk_spawn_move
         bot_id = self.current_bot_id
         state = self._states[bot_id]
         from_pos = state.pos
+        was_chained = state.chained_left > 0
         try:
             action = self.bots[bot_id].act(BotView(self, bot_id))
         except Exception as exc:  # a crashing bot only wastes its own move
@@ -203,6 +224,10 @@ class Game:
 
         state.actions += 1
         state.invalid += not result.success
+        if was_chained:  # the ball and chain wears off after chain_duration of the victim's moves
+            state.chained_left -= 1
+            if state.chained_left == 0:
+                state.dragging = None
         state.last_result = result
         # Only directional actions have a target square (DETECT scans around the bot, BUY has none)
         done = result.action
@@ -227,6 +252,10 @@ class Game:
 
         def fail(msg: str) -> ActionResult:
             return ActionResult(action, False, msg)
+
+        # A chained bot's drag only survives a second MOVE in the same direction
+        if not (action.type is ActionType.MOVE and action.direction is state.dragging):
+            state.dragging = None
 
         if action.type is ActionType.BUY:
             return self._buy(bot_id, action)
@@ -253,18 +282,42 @@ class Game:
                 return fail("cannot stand on an unearthed cell")
             if cell.occupant is not None:
                 return fail("cell is occupied")
+            if state.chained_left > 0 and state.dragging is not action.direction:
+                # Ball and chain: this move only drags the ball; the next MOVE this way steps
+                state.dragging = action.direction
+                return ActionResult(action, True, message="dragging the ball and chain")
+            state.dragging = None
             self.cell(state.pos).occupant = None
             cell.occupant = bot_id
             state.pos = target
             # Free auto-detect of the square the bot just stepped onto
             points, scan, scan_leaks = self._scan(bot_id, [target])
+            if cell.item == PUNK_ITEM:
+                points += self._collect_punk(bot_id, cell)
             return ActionResult(action, True, points=points, scan=scan, scan_leaks=scan_leaks)
+
+        if kind is ActionType.CHAIN:
+            if PowerUp.PUNK not in state.upgrades:
+                return fail("only a punk has a ball and chain")
+            if state.chain_used:
+                return fail("the ball and chain is already used this round")
+            victim = cell.occupant
+            if victim is None or victim == bot_id:
+                return fail("no opponent on that square")
+            if self._states[victim].chained_left > 0:
+                return fail("that bot is already chained")
+            self._states[victim].chained_left = cfg.chain_duration
+            self._states[victim].dragging = None
+            state.chain_used = True
+            return ActionResult(action, True)
 
         if kind is ActionType.UNEARTH:
             if cell.surface is Surface.UNEARTHED:
                 return fail("cell is already unearthed")
             if cell.occupant is not None:
                 return fail("a bot is standing there")
+            if cell.item is not None:
+                return fail("an object lies there")
             cell.surface = Surface.UNEARTHED
             cell.revealed = True
             cell.dug_by = bot_id  # only the game master tracks diggers
@@ -305,6 +358,8 @@ class Game:
         power_up = action.power_up
         if not isinstance(power_up, PowerUp):
             return ActionResult(None, False, f"buy needs a PowerUp: {action!r}")
+        if power_up not in BUYABLE:
+            return ActionResult(action, False, f"{power_up.value} cannot be bought")
         cost = self.config.power_up_cost(power_up)
         if power_up in state.upgrades:
             return ActionResult(action, False, f"{power_up.value} already bought")
@@ -329,6 +384,30 @@ class Game:
                     state.discovered.add(pos)
                     if cell.has_pipe:
                         state.satellite[pos] = SatelliteReading(dirs_from_mask(cell.pipe_mask), cell.risk)
+
+    # --- Punk upgrade ----------------------------------------------------------------------
+    def _spawn_punk(self) -> None:
+        """Place the punk pickup on a random free, untouched square (own RNG keeps others intact)."""
+        self.punk_spawned = True
+        free = [
+            (x, y)
+            for y, row in enumerate(self._cells)
+            for x, c in enumerate(row)
+            if c.surface is Surface.UNTOUCHED and c.occupant is None and c.item is None
+        ]
+        if free:
+            self.punk_pos = random.Random(f"punk-{self.seed}").choice(free)
+            self.cell(self.punk_pos).item = PUNK_ITEM
+
+    def _collect_punk(self, bot_id: int, cell: Cell) -> int:
+        """Stepping onto the pickup: mohawk (PowerUp.PUNK), bonus points, one ball and chain."""
+        state = self._states[bot_id]
+        cell.item = None
+        self.punk_pos = None
+        state.upgrades.add(PowerUp.PUNK)
+        state.bonus += self.config.points_punk
+        self._award(state, self.config.points_punk)
+        return self.config.points_punk
 
     # --- Internals -------------------------------------------------------------------------
     def _scan(

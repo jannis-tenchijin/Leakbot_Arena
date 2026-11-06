@@ -23,6 +23,7 @@ def test_hundred_rounds_fast_and_consistent():
             + seat.leaks_fixed[i] * c.points_leak_fixed
             - seat.open_holes[i] * c.penalty_open_pipe_hole
             - seat.spent[i]
+            + seat.bonus[i]
         )
         assert seat.scores[i] == expected
     assert seat.wins == 100  # single player always "wins"

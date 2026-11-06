@@ -3,12 +3,13 @@
 from .bot_api import ActionResult, BaseBot, BotView, CellInfo, SatelliteReading
 from .config import DEFAULT_CONFIG, GameConfig
 from .game import Game, MoveEvent
-from .model import Action, ActionType, Dir, PipeState, Pos, PowerUp, Surface
+from .model import BUYABLE, Action, ActionType, Dir, PipeState, Pos, PowerUp, Surface
 
 __all__ = [
     "Action",
     "ActionResult",
     "ActionType",
+    "BUYABLE",
     "BaseBot",
     "BotView",
     "CellInfo",

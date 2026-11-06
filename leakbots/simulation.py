@@ -22,6 +22,7 @@ class SeatStats:
     leaks_fixed: list[int] = field(default_factory=list)
     open_holes: list[int] = field(default_factory=list)
     spent: list[int] = field(default_factory=list)
+    bonus: list[int] = field(default_factory=list)
     invalid: list[int] = field(default_factory=list)
     wins: float = 0.0  # ties share the win
 
@@ -111,6 +112,7 @@ class SimulationRunner:
             seat.leaks_fixed.append(st.leaks_fixed)
             seat.open_holes.append(st.open_holes)
             seat.spent.append(st.spent)
+            seat.bonus.append(st.bonus)
             seat.invalid.append(st.invalid)
             if bot_id in winners:
                 seat.wins += 1 / len(winners)

@@ -1,6 +1,6 @@
 """Baseline opponent: picks a uniformly random action every move."""
 
-from leakbots import Action, ActionType, BaseBot, BotView, Dir, PowerUp
+from leakbots import BUYABLE, Action, ActionType, BaseBot, BotView, Dir
 
 
 class RandomBot(BaseBot):
@@ -10,5 +10,5 @@ class RandomBot(BaseBot):
         # self.rng is seeded by the engine, so simulations are reproducible
         kind = self.rng.choice(list(ActionType))
         if kind is ActionType.BUY:
-            return Action.buy(self.rng.choice(list(PowerUp)))
+            return Action.buy(self.rng.choice(BUYABLE))
         return Action(kind, self.rng.choice(list(Dir)))

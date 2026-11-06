@@ -75,6 +75,7 @@ class ActionType(Enum):
     FIX = "fix"
     REFILL = "refill"
     BUY = "buy"  # buy a power-up with points
+    CHAIN = "chain"  # punk only: put the ball and chain on an adjacent opponent (once per round)
 
 
 class PowerUp(Enum):
@@ -82,6 +83,11 @@ class PowerUp(Enum):
 
     UT = "ut"  # ultrasonic testing: detect also reports leaks
     SATELLITE = "satellite"  # Tenchijin satellite: the whole pipe network with risk grades
+    PUNK = "punk"  # collected from the punk pickup (not bought): +points, mohawk, one ball and chain
+
+
+BUYABLE = (PowerUp.UT, PowerUp.SATELLITE)  # power-ups Action.buy accepts
+PUNK_ITEM = "punk"  # Cell.item value of the punk pickup
 
 
 RISK_GRADES = ("A", "B", "C", "D", "E")  # satellite risk grades of pipe squares, lowest risk first
@@ -98,6 +104,10 @@ class Action:
     @classmethod
     def buy(cls, power_up: PowerUp) -> Action:
         return cls(ActionType.BUY, power_up=power_up)
+
+    @classmethod
+    def chain(cls, direction: Dir) -> Action:
+        return cls(ActionType.CHAIN, direction)
 
     # Convenience constructors so bot code reads naturally: Action.move(Dir.UP)
     @classmethod
@@ -132,6 +142,7 @@ class Cell:
     surface: Surface = Surface.UNTOUCHED
     pipe_mask: int = 0  # connection bits (see Dir.bit); 0 means no pipe
     pipe_state: PipeState | None = None
+    item: str | None = None  # game object lying here (PUNK_ITEM); collected by stepping onto it
     risk: str | None = None  # satellite risk grade "A".."E" of a pipe square (fixed for the round)
     leak_found: bool = False  # a bot has already been credited for finding this leak
     revealed: bool = False  # was unearthed at some point: its pipe is public knowledge forever

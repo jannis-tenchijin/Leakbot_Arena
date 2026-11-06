@@ -38,11 +38,18 @@ class GameConfig:
     # Power-ups (bought with points; buying uses a move; each once per bot)
     cost_ut: int = 15  # detect also reports leaks
     cost_satellite: int = 25  # Tenchijin satellite: whole pipe network with A-E risk grades
+    # Punk upgrade: a pickup that appears on a random free square at this move number (0 = never).
+    # Collecting it pays points_punk and (in 1 vs 1 / battle royale) one ball and chain to put on
+    # an adjacent opponent: for chain_duration of its moves, every step needs two moves.
+    punk_spawn_move: int = 200
+    points_punk: int = 10
+    chain_duration: int = 100
     # Risk grades: P(k) ~ risk_decay**k for k = 0..3 (0.3 -> 70.6 / 21.2 / 6.4 / 1.9 %).
     # Intact pipes get A, B, C, D for k = 0..3; leaks get E, D, C, B.
     risk_decay: float = 0.3
 
     def power_up_cost(self, power_up: PowerUp) -> int:
+        """Price of a buyable power-up (the punk upgrade is collected, never bought)."""
         return {PowerUp.UT: self.cost_ut, PowerUp.SATELLITE: self.cost_satellite}[power_up]
 
     def __post_init__(self) -> None:
@@ -55,6 +62,8 @@ class GameConfig:
             raise ValueError("n_leaks must be >= 0 and max_moves >= 1")
         if self.cost_ut < 0 or self.cost_satellite < 0:
             raise ValueError("power-up costs must be >= 0")
+        if self.punk_spawn_move < 0 or self.chain_duration < 1:
+            raise ValueError("punk_spawn_move must be >= 0 and chain_duration >= 1")
         if not 0.0 < self.risk_decay <= 1.0:
             raise ValueError("risk_decay must be in (0, 1]")
 
