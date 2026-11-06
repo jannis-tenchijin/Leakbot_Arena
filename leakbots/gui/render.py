@@ -358,7 +358,7 @@ class BoardRenderer:
         tween = self._tween.get(bot_id)
         if tween:
             (x0, y0), (x1, y1), start, dur = tween
-            k = (now - start) / dur
+            k = max(0.0, (now - start) / dur)  # clamp: a frame drawn before the move started
             if k < 1:
                 k = k * k * (3 - 2 * k)  # smoothstep
                 return x0 + (x1 - x0) * k, y0 + (y1 - y0) * k
