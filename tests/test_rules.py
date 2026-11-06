@@ -8,13 +8,13 @@ from dataclasses import replace
 
 import pytest
 
-from leakbots import Action, BaseBot, Dir, Game, GameConfig, PipeState, Surface
+from leakbots import Action, ActionType, BaseBot, Dir, Game, GameConfig, PipeState, PowerUp, Surface
 from leakbots.bot_api import BotView
 
 H = Dir.LEFT.bit | Dir.RIGHT.bit
 MASKS = [[0] * 5, [0] * 5, [H] * 5, [0] * 5, [0] * 5]
 LEAK = (2, 2)
-CONFIG = GameConfig(width=5, height=5, max_rounds=10, n_leaks=1)
+CONFIG = GameConfig(width=5, height=5, max_moves=10, n_leaks=1)
 
 
 class IdleBot(BaseBot):
@@ -113,11 +113,41 @@ def test_refilled_square_stays_public():
     assert info.pipe_dirs == {Dir.LEFT, Dir.RIGHT} and info.walkable
 
 
-def test_ut_upgrade_detects_leaks():
-    g = make_game(config=replace(CONFIG, ut_upgrade=True))
-    r = ok(g, Action.detect(Dir.DOWN))
-    assert r.detected_leak is True and r.points == 1 + 5
-    assert g.cell(LEAK).leak_found
+# --- Power-ups -------------------------------------------------------------------------------
+def give_points(g, bot_id, points):
+    g.states[bot_id].score = points  # test shortcut: pretend the bot already earned these
+
+
+def test_buy_needs_enough_points_and_uses_the_move():
+    g = make_game()
+    r = bad(g, Action.buy(PowerUp.UT))
+    assert "costs 15" in r.message and g.states[0].upgrades == set()
+    give_points(g, 0, 20)
+    r = ok(g, Action.buy(PowerUp.UT))
+    assert r.points == -15 and g.states[0].score == 5 and g.states[0].spent == 15
+    assert BotView(g, 0).upgrades == {PowerUp.UT} and BotView(g, 0).has(PowerUp.UT)
+    assert "already" in bad(g, Action.buy(PowerUp.UT)).message  # once per round
+    assert "costs 25" in bad(g, Action.buy(PowerUp.SATELLITE)).message
+
+
+def test_buy_is_public_and_needs_a_power_up():
+    g = make_game(n_bots=2)
+    give_points(g, 1, 30)
+    ok(g, Action.buy(PowerUp.SATELLITE), bot_id=1)
+    assert BotView(g, 0).upgrades_of(1) == {PowerUp.SATELLITE}
+    assert BotView(g, 0).points["satellite_cost"] == 25
+    assert not g.apply_action(0, Action(ActionType.BUY)).success  # no power-up named
+
+
+def test_ut_reports_leaks_without_points():
+    g = make_game()
+    give_points(g, 0, 15)
+    ok(g, Action.buy(PowerUp.UT))
+    r = ok(g, Action.detect(Dir.DOWN))  # the leak square
+    assert r.points == 1  # only the pipe discovery; seeing the leak pays nothing
+    assert dict(BotView(g, 0).detected_leaks) == {LEAK: True}
+    assert not g.cell(LEAK).leak_found  # unearthing it still pays the +5
+    assert ok(g, Action.unearth(Dir.DOWN)).points == 5
 
 
 # --- Unearth / fix / refill ----------------------------------------------------------------
@@ -170,7 +200,7 @@ def test_refill_any_hole_including_other_bots():
 
 # --- End of game -----------------------------------------------------------------------------
 def test_open_pipe_holes_cost_the_latest_digger():
-    cfg = replace(CONFIG, max_rounds=1)
+    cfg = replace(CONFIG, max_moves=1)
     g = make_game(n_bots=2, spawns=((1, 1), (3, 3)), config=cfg)
     ok(g, Action.unearth(Dir.DOWN), bot_id=0)  # (1, 2) pipe -> bot 0
     ok(g, Action.unearth(Dir.UP), bot_id=1)  # (3, 2) pipe -> bot 1
@@ -178,14 +208,14 @@ def test_open_pipe_holes_cost_the_latest_digger():
     ok(g, Action.unearth(Dir.UP), bot_id=1)  # ... and digs it again: still bot 1's
     ok(g, Action.unearth(Dir.RIGHT), bot_id=1)  # (4, 3) no pipe: no penalty
     assert g.open_pipe_holes(0) == 1 and g.open_pipe_holes(1) == 1
-    g.run()  # 1 round: both IdleBots waste a turn, then penalties apply
+    g.run()  # 1 move each: both IdleBots waste it, then penalties apply
     assert g.over
     assert (g.states[0].open_holes, g.states[0].score) == (1, -2)
     assert (g.states[1].open_holes, g.states[1].score) == (1, -2)
 
 
 def test_refilled_hole_is_not_penalised():
-    g = make_game(config=replace(CONFIG, max_rounds=1))
+    g = make_game(config=replace(CONFIG, max_moves=1))
     ok(g, Action.unearth(Dir.DOWN))
     ok(g, Action.fix(Dir.DOWN))
     ok(g, Action.refill(Dir.DOWN))
@@ -198,13 +228,13 @@ class RecorderBot(BaseBot):
     calls: list = []
 
     def act(self, view):
-        RecorderBot.calls.append((view.bot_id, view.round))
+        RecorderBot.calls.append((view.bot_id, view.move))
         return Action.detect(Dir.UP)
 
 
-def test_round_robin_and_round_cap():
+def test_turn_order_and_move_cap():
     RecorderBot.calls = []
-    g = make_game(n_bots=2, bot=RecorderBot, config=replace(CONFIG, max_rounds=3))
+    g = make_game(n_bots=2, bot=RecorderBot, config=replace(CONFIG, max_moves=3))
     g.run()
     assert RecorderBot.calls == [(0, 0), (1, 0), (0, 1), (1, 1), (0, 2), (1, 2)]
     assert g.over and g.turn == 6 and g.step() is None
@@ -212,7 +242,7 @@ def test_round_robin_and_round_cap():
 
 def test_single_player_acts_every_turn():
     RecorderBot.calls = []
-    make_game(n_bots=1, bot=RecorderBot, config=replace(CONFIG, max_rounds=4)).run()
+    make_game(n_bots=1, bot=RecorderBot, config=replace(CONFIG, max_moves=4)).run()
     assert [c[0] for c in RecorderBot.calls] == [0, 0, 0, 0]
 
 
@@ -228,7 +258,7 @@ class JunkBot(BaseBot):
 
 @pytest.mark.parametrize("bot", [CrashBot, JunkBot])
 def test_broken_bots_only_waste_their_turn(bot):
-    g = make_game(bot=bot, config=replace(CONFIG, max_rounds=5)).run()
+    g = make_game(bot=bot, config=replace(CONFIG, max_moves=5)).run()
     assert g.over and g.states[0].invalid == 5 and g.states[0].score == 0
 
 

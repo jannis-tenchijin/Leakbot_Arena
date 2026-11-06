@@ -8,7 +8,7 @@ leaking water pipes on a grid. Python 3.10+, pygame-ce for the viewer, pytest fo
 - Setup: `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`
 - Tests: `.venv/bin/python -m pytest -q` (must stay green; ~4 s)
 - GUI: `.venv/bin/python main.py [--bots random_bot random_bot] [--seed N]`
-- Benchmark: `.venv/bin/python simulate.py --bots random_bot --games 100 --seed 1`
+- Benchmark: `.venv/bin/python simulate.py --bots random_bot --rounds 100 --seed 1`
 - Headless render (screenshots, CI): set `SDL_VIDEODRIVER=dummy` before importing pygame.
 - Web build: `.venv/bin/python tools/build_web.py` (needs `requirements-web.txt`); output in
   `build/leakbots-arena/build/web`. Preview with the `web` config in `.claude/launch.json` and
@@ -24,6 +24,12 @@ leaking water pipes on a grid. Python 3.10+, pygame-ce for the viewer, pytest fo
   a thread or a blocking loop inside the GUI.
 - `main.py` must keep `import pygame` under `if WEB:` so pygbag's loader fetches pygame.
 - Desktop-only features (drag-and-drop, ESC to quit) must be guarded by `WEB` in `gui/app.py`.
+
+## Terms (use them consistently in code, UI and docs)
+
+- **move** = one action by one bot (bots take turns). **round** = one whole game (`Game`), in
+  which every bot makes `GameConfig.max_moves` (500) moves. The simulation plays 100 rounds.
+- `Game.turn` is only the internal global move counter; never show "turn"/"game" to users.
 
 ## Architecture rules
 
@@ -56,9 +62,9 @@ leaking water pipes on a grid. Python 3.10+, pygame-ce for the viewer, pytest fo
 
 - Pipe networks: one component, reciprocal links, no interior dead ends, off-map links only
   on border cells (`tests/test_pipes.py`, 60 seeds x 4 sizes).
-- Score = 1·pipes_detected + 5·leaks_found + 15·leaks_fixed − 2·open_holes
+- Score = 1·pipes_detected + 5·leaks_found + 15·leaks_fixed − 2·open_holes − spent
   (`tests/test_simulation.py`). Update both tests and README when point values change.
-- Turn order is strict round-robin; game ends exactly at `max_rounds`.
+- Bots move in strict rotation; a round ends after every bot made `max_moves` moves.
 
 ## Conventions
 

@@ -1,23 +1,29 @@
 """Competitor template: copy this file to bots/<your_name>_bot.py and fill in act().
 
 Run it:    python main.py --bots <your_name>_bot:MyBot
-Benchmark: python simulate.py --bots <your_name>_bot:MyBot --games 100
+Benchmark: python simulate.py --bots <your_name>_bot:MyBot --rounds 100
 
-Moves (each targets the neighbouring cell in a Dir: UP, DOWN, LEFT, RIGHT):
-    Action.move(d)     walk onto an untouched, free cell
-    Action.detect(d)   privately learn if a pipe is buried there      (+1 first time, never-dug cells)
-    Action.unearth(d)  dig the cell open; holes cannot be walked on   (+5 if it reveals a leak)
-    Action.fix(d)      repair an unearthed broken pipe                (+15)
+A move = one action by your bot. A round = one game: every bot makes 500 moves.
+The square you stand on is detected for free (at the start and after every step).
+
+Actions (directional ones aim at the neighbouring square in a Dir: UP, DOWN, LEFT, RIGHT):
+    Action.move(d)     step onto an untouched, free square          (+1 if it is a new pipe square)
+    Action.detect()    scan all four neighbours at once (private)   (+1 per new pipe square)
+    Action.unearth(d)  dig the square open; holes cannot be walked on   (+5 if it reveals a leak)
+    Action.fix(d)      repair an unearthed broken pipe              (+15)
     Action.refill(d)   fill any hole again (not a still-leaking pipe)
-At game end every pipe hole you dug and left open costs -2.
+    Action.buy(PowerUp.UT)         15 points: detects also report leaks
+    Action.buy(PowerUp.SATELLITE)  25 points: whole pipe network with A-E risk grades
+At the end of the round every pipe hole you dug and left open costs -2.
 
 Useful view members (see leakbots/bot_api.py for all):
-    view.me, view.width, view.height, view.round, view.rounds_left
-    view.cell(pos) -> CellInfo(surface, has_pipe, pipe_state, pipe_dirs, bot)
-    view.is_walkable(pos), view.neighbor(d), view.detected, view.last_result
+    view.me, view.width, view.height, view.move, view.moves_left
+    view.cell(pos) -> CellInfo(surface, has_pipe, pipe_state, pipe_dirs, bot, revealed)
+    view.is_walkable(pos), view.neighbor(d), view.detected, view.detected_leaks
+    view.satellite, view.risk(pos), view.upgrades, view.score, view.last_result
 """
 
-from leakbots import Action, BaseBot, BotView, Dir
+from leakbots import Action, BaseBot, BotView, PowerUp  # noqa: F401  (PowerUp for Action.buy)
 
 
 class MyBot(BaseBot):
@@ -30,4 +36,4 @@ class MyBot(BaseBot):
 
     def act(self, view: BotView) -> Action:
         # TODO: replace with your strategy
-        return Action.detect(Dir.UP)
+        return Action.detect()

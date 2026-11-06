@@ -21,6 +21,7 @@ from ..bot_api import BaseBot
 from ..config import DEFAULT_CONFIG, GameConfig
 from ..game import Game
 from ..loader import SPRITES_DIR, sprite_path
+from ..model import PowerUp
 from ..simulation import SimulationResult, SimulationRunner, seat_labels
 from . import theme
 from .i18n import LANGS, rulebook, tr
@@ -32,7 +33,7 @@ MARGIN = 24
 SIDEBAR_W = 340
 MAX_RATE = 500  # moves per second at the right end of the slider (before "MAX")
 FRAME_STEP_BUDGET = 0.012  # seconds per frame the engine may use in MAX mode
-SIM_FRAME_BUDGET = 0.02  # seconds per frame spent on simulated games
+SIM_FRAME_BUDGET = 0.02  # seconds per frame spent on simulated rounds
 
 
 class App:
@@ -43,14 +44,14 @@ class App:
         bot_classes: Sequence[type[BaseBot]],
         config: GameConfig = DEFAULT_CONFIG,
         seed: int | None = None,
-        sim_games: int = 100,
+        sim_rounds: int = 100,
         lang: str = "en",
     ) -> None:
         pygame.init()
         theme.reset_fonts()
         self.bot_classes = list(bot_classes)
         self.config = config
-        self.sim_games = sim_games
+        self.sim_rounds = sim_rounds
         self.labels = seat_labels(self.bot_classes)
         self.set_language(lang if lang in LANGS else "en")
 
@@ -76,7 +77,7 @@ class App:
         self.card_rects: list[pygame.Rect] = []
         self._toast = ("", 0.0)
 
-        # Simulation (a few games per frame, see SIM_FRAME_BUDGET)
+        # Simulation (a few rounds per frame, see SIM_FRAME_BUDGET)
         self.sim: SimulationRunner | None = None
         self.sim_result: SimulationResult | None = None
 
@@ -153,7 +154,7 @@ class App:
         if self.game.over:
             self.playing = False
 
-        # Simulated games share the frame with live play; slow frames (throttled tab) get more time
+        # Simulated rounds share the frame with live play; slow frames (throttled tab) get more time
         if self.simulating:
             self.sim.advance(min(0.25, max(SIM_FRAME_BUDGET, dt * 0.5)))
             if self.sim.done:
@@ -170,7 +171,7 @@ class App:
             self.sim_result = self.sim.result()
             return
         self.sim_result = None
-        self.sim = SimulationRunner(self.bot_classes, self.sim_games, random.randrange(1_000_000), self.config)
+        self.sim = SimulationRunner(self.bot_classes, self.sim_rounds, random.randrange(1_000_000), self.config)
 
     # --- Sprites ----------------------------------------------------------------------------
     def handle_drop(self, file: str, bot_id: int | None = None) -> None:
@@ -222,7 +223,7 @@ class App:
             Button(r(2, y1, w3), lambda: self.t("restart"), self.restart),
             Button(r(0, y2, w2), lambda: self.t("new_map"), self.new_game),
             Button(r(1, y2, w2),
-                   lambda: self.t("cancel_sim") if self.simulating else self.t("simulate", n=self.sim_games),
+                   lambda: self.t("cancel_sim") if self.simulating else self.t("simulate", n=self.sim_rounds),
                    self.toggle_simulation, accent=theme.GOOD),
             Button(r(0, y3, w2), lambda: self.t("pipes_ghost" if self.ghost_pipes else "pipes_hidden"),
                    self._toggle_pipes, accent=theme.WATER),
@@ -364,8 +365,8 @@ class App:
         box = pygame.Rect(x, 88, w, 52)
         pygame.draw.rect(self.screen, theme.PANEL, box, border_radius=6)
         pygame.draw.rect(self.screen, theme.PANEL_EDGE, box, width=2, border_radius=6)
-        rnd = min(g.round + 1, g.config.max_rounds)
-        self._text(self.t("round", r=rnd, max=g.config.max_rounds), (x + 10, 96), 14, bold=True)
+        move = min(g.move + 1, g.config.max_moves)
+        self._text(self.t("move", m=move, max=g.config.max_moves), (x + 10, 96), 14, bold=True)
         self._text(self._mode_label(), (x + w - 10, 97), 12, theme.ACCENT, right=True)
         found, fixed, total = g.leak_counts()
         self._text(self.t("leaks", f=found, x=fixed, t=total), (x + 10, 118), 12, theme.WATER)
@@ -424,7 +425,8 @@ class App:
 
         tx = pr.right + 10
         holes = st.open_holes if g.over else g.open_pipe_holes(bot_id)
-        self._text(self.labels[bot_id], (tx, rect.y + 6), 14, color, bold=True)
+        name = self._text(self.labels[bot_id], (tx, rect.y + 6), 14, color, bold=True)
+        self._draw_badges(st.upgrades, name.right + 6, rect.y + 6)
         self._text(str(st.score), (rect.right - 10, rect.y + 4), 22 if rect.h >= 40 else 16, theme.TEXT,
                    bold=True, right=True)
         if rect.h >= 44:
@@ -437,22 +439,33 @@ class App:
             if st.last_error:
                 self._text(self.t("error", e=st.last_error)[:40], (tx, rect.y + 60), 11, theme.DANGER)
 
+    def _draw_badges(self, upgrades, x: int, y: int) -> None:
+        """Small pills for bought power-ups next to a bot's name."""
+        for power_up, key, color in ((PowerUp.UT, "badge_ut", theme.WATER), (PowerUp.SATELLITE, "badge_sat", theme.ACCENT)):
+            if power_up not in upgrades:
+                continue
+            img = theme.font(10, bold=True).render(self.t(key), True, (14, 16, 38))
+            pill = img.get_rect(topleft=(x + 5, y + 2)).inflate(10, 4)
+            pygame.draw.rect(self.screen, color, pill, border_radius=7)
+            self.screen.blit(img, img.get_rect(center=pill.center))
+            x = pill.right + 3
+
     def _draw_sim_panel(self, rect: pygame.Rect) -> None:
         pygame.draw.rect(self.screen, theme.PANEL, rect, border_radius=6)
         pygame.draw.rect(self.screen, theme.PANEL_EDGE, rect, width=2, border_radius=6)
         x, y = rect.x + 10, rect.y + 8
         title = self._text(self.t("sim_title"), (x, y), 12, theme.GOOD, bold=True)
         if self.simulating:
-            done, total = self.sim.played, self.sim.n_games
+            done, total = self.sim.played, self.sim.n_rounds
             draw_progress(self.screen, pygame.Rect(x, y + 24, rect.w - 20, 16), done / max(1, total))
             self._text(self.t("sim_progress", d=done, t=total, s=self.sim.seed), (x, y + 46), 12, theme.TEXT)
             return
         res = self.sim_result
         if res is None:
-            for i, line in enumerate(self.t("sim_idle", n=self.sim_games).split("\n")):
+            for i, line in enumerate(self.t("sim_idle", n=self.sim_rounds).split("\n")):
                 self._text(line, (x, y + 24 + 16 * i), 12, theme.MUTED)
             return
-        head = self.t("sim_head", g=res.games, sec=f"{res.seconds:.1f}", s=res.first_seed)
+        head = self.t("sim_head", g=res.rounds, sec=f"{res.seconds:.1f}", s=res.first_seed)
         if res.cancelled:
             head += "  " + self.t("sim_cancelled")
         self._text(head, (title.right + 12, y + 1), 11, theme.MUTED)
@@ -466,7 +479,7 @@ class App:
             self._text(seat.label, (x, y), 12, color, bold=True)
             line = self.t("sim_avg", a=f"{seat.mean('scores'):.1f}")
             if multi:
-                line += "  " + self.t("sim_wins", w=f"{100 * seat.wins / res.games:.0f}")
+                line += "  " + self.t("sim_wins", w=f"{100 * seat.wins / res.rounds:.0f}")
             self._text(line, (rect.right - 10, y), 12, theme.TEXT, bold=True, right=True)
             y += 16
             if compact:
@@ -520,28 +533,40 @@ class App:
 
         pad, gutter = 22, 34
         col_w = (panel.w - 2 * pad - gutter) // 2
-        left, right = rulebook(self.lang, self.config)
-        for col, sections in enumerate((left, right)):
-            self._draw_rule_column(sections, panel.x + pad + col * (col_w + gutter), panel.y + 18, col_w)
+        columns = rulebook(self.lang, self.config)
+        # Largest text size at which both columns fit inside the panel
+        size = next(
+            (s for s in (14, 13, 12) if all(
+                self._draw_rule_column(c, 0, panel.y + 18, col_w, s, draw=False) <= panel.bottom - 8
+                for c in columns)),
+            11,
+        )
+        self.rules_text_size = size
+        for col, sections in enumerate(columns):
+            self._draw_rule_column(sections, panel.x + pad + col * (col_w + gutter), panel.y + 18, col_w, size)
 
-    def _draw_rule_column(self, sections, x: int, y: int, width: int) -> None:
-        body = theme.font(14)
-        bold = theme.font(14, bold=True)
+    def _draw_rule_column(self, sections, x: int, y: int, width: int, size: int, draw: bool = True) -> int:
+        """Draw (or with draw=False only measure) one rulebook column; returns the bottom y."""
+        body = theme.font(size)
+        bold = theme.font(size, bold=True)
         line_h = body.get_linesize() + 1
         for title, items in sections:
-            self._text(title, (x, y), 16, theme.WATER, bold=True)
-            y += 28
+            if draw:
+                self._text(title, (x, y), size + 2, theme.WATER, bold=True)
+            y += size * 2
             label_w = max((bold.size(label)[0] for label, _ in items if label), default=0)
             for label, text in items:
                 indent = label_w + 12 if label else 16  # bullets for plain notes, a column for labels
-                if label:
-                    color = theme.GOOD if label.startswith("+") else theme.DANGER if label.startswith("-") \
-                        else theme.ACCENT
-                    self.screen.blit(bold.render(label, True, color), (x, y))
-                else:
-                    pygame.draw.circle(self.screen, theme.MUTED, (x + 4, y + line_h // 2), 2)
-                for line in wrap_text(body, text, width - indent):
-                    self.screen.blit(body.render(line, True, theme.TEXT), (x + indent, y))
-                    y += line_h
-                y += 5
+                lines = wrap_text(body, text, width - indent)
+                if draw:
+                    if label:
+                        color = theme.GOOD if label.startswith("+") else theme.DANGER if label.startswith("-") \
+                            else theme.ACCENT
+                        self.screen.blit(bold.render(label, True, color), (x, y))
+                    else:
+                        pygame.draw.circle(self.screen, theme.MUTED, (x + 4, y + line_h // 2), 2)
+                    for i, line in enumerate(lines):
+                        self.screen.blit(body.render(line, True, theme.TEXT), (x + indent, y + i * line_h))
+                y += line_h * len(lines) + 5
             y += 12
+        return y

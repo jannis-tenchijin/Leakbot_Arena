@@ -15,7 +15,7 @@ from leakbots import loader  # noqa: E402
 
 @pytest.fixture
 def app():
-    a = app_module.App([RandomBot, RandomBot], seed=3, sim_games=5)
+    a = app_module.App([RandomBot, RandomBot], seed=3, sim_rounds=5)
     yield a
     pygame.quit()
 
@@ -98,6 +98,14 @@ def test_language_switch_and_rulebook(app):
 
 
 @pytest.mark.parametrize("lang", ["en", "ja"])
+def test_rulebook_fits_at_readable_size(app, lang):
+    app.set_language(lang)
+    app.show_rules = True
+    app.draw(1.0)
+    assert app.rules_text_size >= 12  # the auto-fit should not need to shrink below 12 px
+
+
+@pytest.mark.parametrize("lang", ["en", "ja"])
 def test_sidebar_text_fits(app, lang):
     from leakbots.gui import theme
 
@@ -119,12 +127,12 @@ def test_simulation_runs_across_frames(app):
         frames(app, 1)
         if not app.simulating:
             break
-    assert app.sim_result is not None and app.sim_result.games == 5
+    assert app.sim_result is not None and app.sim_result.rounds == 5
     app.draw(5.0)  # results panel path
 
 
 def test_simulation_cancel(app):
-    app.sim_games = 10_000
+    app.sim_rounds = 10_000
     app.toggle_simulation()
     frames(app, 2)
     app.toggle_simulation()  # second press cancels

@@ -67,21 +67,34 @@ class PipeState(Enum):
 
 
 class ActionType(Enum):
-    """Every move a bot can make. All of them target the neighbouring cell in a direction."""
+    """Every action a bot can take with one move."""
 
     MOVE = "move"
     DETECT = "detect"
     UNEARTH = "unearth"
     FIX = "fix"
     REFILL = "refill"
+    BUY = "buy"  # buy a power-up with points
+
+
+class PowerUp(Enum):
+    """Upgrades a bot can buy once per round."""
+
+    UT = "ut"  # ultrasonic testing: detect also reports leaks
+    SATELLITE = "satellite"  # Tenchijin satellite: the whole pipe network with risk grades
 
 
 @dataclass(frozen=True)
 class Action:
-    """One bot move: an action type plus the direction of the target cell."""
+    """One bot move: an action type plus its target (a direction, or a power-up for BUY)."""
 
     type: ActionType
-    direction: Dir
+    direction: Dir | None = None
+    power_up: PowerUp | None = None
+
+    @classmethod
+    def buy(cls, power_up: PowerUp) -> Action:
+        return cls(ActionType.BUY, power_up=power_up)
 
     # Convenience constructors so bot code reads naturally: Action.move(Dir.UP)
     @classmethod
@@ -89,7 +102,7 @@ class Action:
         return cls(ActionType.MOVE, direction)
 
     @classmethod
-    def detect(cls, direction: Dir) -> Action:
+    def detect(cls, direction: Dir | None = None) -> Action:
         return cls(ActionType.DETECT, direction)
 
     @classmethod
@@ -105,7 +118,8 @@ class Action:
         return cls(ActionType.REFILL, direction)
 
     def __str__(self) -> str:
-        return f"{self.type.value} {self.direction.value}"
+        target = self.power_up or self.direction
+        return f"{self.type.value} {target.value}" if target else self.type.value
 
 
 @dataclass(slots=True)

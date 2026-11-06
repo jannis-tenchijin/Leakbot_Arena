@@ -1,4 +1,8 @@
-"""The game master: owns the true map, applies the rules, keeps score."""
+"""The game master: owns the true map, applies the rules, keeps score.
+
+Terms: a *move* is one action by one bot (bots take turns); a *round* is one whole game
+(one ``Game``), in which every bot makes ``config.max_moves`` moves.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +12,7 @@ from dataclasses import dataclass, field
 
 from .bot_api import ActionResult, BaseBot, BotView
 from .config import DEFAULT_CONFIG, GameConfig
-from .model import Action, ActionType, Cell, Dir, PipeState, Pos, Surface
+from .model import Action, ActionType, Cell, Dir, PipeState, Pos, PowerUp, Surface
 from .pipes import generate_pipe_masks, pick_leaks
 
 
@@ -21,24 +25,25 @@ class BotState:
     pipes_detected: int = 0
     leaks_found: int = 0
     leaks_fixed: int = 0
-    open_holes: int = 0  # pipe holes charged at game end
+    open_holes: int = 0  # pipe holes charged at the end of the round
+    spent: int = 0  # points spent on power-ups
     invalid: int = 0
     actions: int = 0
     last_scored_turn: int = -1
-    ut_upgrade: bool = False
     facing: Dir = Dir.RIGHT  # direction of the last action (for drawing)
     last_result: ActionResult | None = None
     last_error: str | None = None
-    detected: dict[Pos, bool] = field(default_factory=dict)
-    detected_leaks: dict[Pos, bool] = field(default_factory=dict)
-    scored_detects: set[Pos] = field(default_factory=set)
+    upgrades: set[PowerUp] = field(default_factory=set)  # power-ups bought this round
+    detected: dict[Pos, bool] = field(default_factory=dict)  # private memory: pos -> had a pipe
+    detected_leaks: dict[Pos, bool] = field(default_factory=dict)  # UT readings: pos -> leaking
+    discovered: set[Pos] = field(default_factory=set)  # squares that can no longer pay +1 to this bot
 
 
 @dataclass(frozen=True)
-class TurnEvent:
-    """What happened in one turn; the GUI uses these for animations."""
+class MoveEvent:
+    """What happened in one move; the GUI uses these for animations."""
 
-    turn: int
+    turn: int  # global sequence number of the move (0 = first move of the round)
     bot_id: int
     from_pos: Pos
     target: Pos | None
@@ -47,7 +52,7 @@ class TurnEvent:
 
 
 class Game:
-    """One match between one or more bots.
+    """One round (one game) between one or more bots.
 
     Args:
         bot_classes: one BaseBot subclass per seat (the same class may appear twice).
@@ -98,12 +103,12 @@ class Game:
         for bot_id, (bot, pos) in enumerate(zip(self.bots, spawns)):
             bot.id = bot_id
             bot.rng = random.Random(self.rng.randrange(2**31))  # per-bot reproducible randomness
-            self._states.append(BotState(pos=tuple(pos), ut_upgrade=config.ut_upgrade))
+            self._states.append(BotState(pos=tuple(pos)))
             self._cells[pos[1]][pos[0]].occupant = bot_id
 
         self.turn = 0  # total actions taken so far
         self.over = False
-        self.history: list[TurnEvent] = []
+        self.history: list[MoveEvent] = []
         for bot_id, bot in enumerate(self.bots):
             self._call_hook(bot_id, bot.on_game_start)
 
@@ -121,7 +126,8 @@ class Game:
         return len(self.bots)
 
     @property
-    def round(self) -> int:
+    def move(self) -> int:
+        """Moves each bot has completed so far (the current move number, 0-based)."""
         return self.turn // self.n_bots
 
     @property
@@ -163,15 +169,15 @@ class Game:
         best = self._rank_key(self.ranking()[0])
         return [i for i in range(self.n_bots) if self._rank_key(i) == best]
 
-    # --- Turn loop -------------------------------------------------------------------------
+    # --- Move loop -------------------------------------------------------------------------
     def run(self) -> Game:
-        """Play until the round cap."""
+        """Play until every bot has made max_moves moves."""
         while not self.over:
             self.step()
         return self
 
-    def step(self) -> TurnEvent | None:
-        """Let the current bot perform one action. Returns None once the game is over."""
+    def step(self) -> MoveEvent | None:
+        """Let the bot whose turn it is make one move. Returns None once the round is over."""
         if self.over:
             return None
         bot_id = self.current_bot_id
@@ -179,7 +185,7 @@ class Game:
         from_pos = state.pos
         try:
             action = self.bots[bot_id].act(BotView(self, bot_id))
-        except Exception as exc:  # a crashing bot only wastes its own turn
+        except Exception as exc:  # a crashing bot only wastes its own move
             state.last_error = f"{type(exc).__name__}: {exc}"
             action = None
             result = ActionResult(None, False, f"bot error: {state.last_error}")
@@ -189,32 +195,36 @@ class Game:
         state.actions += 1
         state.invalid += not result.success
         state.last_result = result
-        target = action.direction.step(from_pos) if result.action is not None else None
-        event = TurnEvent(self.turn, bot_id, from_pos, target, result.action, result)
+        direction = result.action.direction if result.action is not None else None
+        target = direction.step(from_pos) if direction is not None else None
+        event = MoveEvent(self.turn, bot_id, from_pos, target, result.action, result)
         self.history.append(event)
 
         self.turn += 1
-        if self.round >= self.config.max_rounds:
+        if self.move >= self.config.max_moves:
             self._finish()
         return event
 
     # --- Rules -----------------------------------------------------------------------------
     def apply_action(self, bot_id: int, action: object) -> ActionResult:
         """Validate and execute one action for a bot. Invalid actions change nothing."""
-        if not (
-            isinstance(action, Action)
-            and isinstance(action.type, ActionType)
-            and isinstance(action.direction, Dir)
-        ):
+        if not (isinstance(action, Action) and isinstance(action.type, ActionType)):
             return ActionResult(None, False, f"not a valid Action: {action!r}")
 
         cfg = self.config
         state = self._states[bot_id]
-        state.facing = action.direction
-        target = action.direction.step(state.pos)
 
         def fail(msg: str) -> ActionResult:
             return ActionResult(action, False, msg)
+
+        if action.type is ActionType.BUY:
+            return self._buy(bot_id, action)
+
+        # Every other action targets the neighbouring square in a direction
+        if not isinstance(action.direction, Dir):
+            return ActionResult(None, False, f"{action.type.value} needs a Dir: {action!r}")
+        state.facing = action.direction
+        target = action.direction.step(state.pos)
 
         if not self.in_bounds(target):
             return fail("target is outside the grid")
@@ -238,18 +248,16 @@ class Game:
             # +1 only for a pipe square that is new to this bot: never detected by it before and
             # never unearthed by anyone (unearthed squares were seen by every bot; refilling
             # does not make a pipe "undiscovered")
-            if has_pipe and not cell.revealed and target not in state.scored_detects:
-                state.scored_detects.add(target)
+            if has_pipe and not cell.revealed and target not in state.discovered:
+                state.discovered.add(target)
                 state.pipes_detected += 1
                 points += cfg.points_pipe_detected
             leak = None
-            if state.ut_upgrade:
+            if PowerUp.UT in state.upgrades:
+                # UT reports leaks on every square detected after buying it; no points for that
+                # (a leak still has to be unearthed for +found and fixed for +fixed)
                 leak = cell.pipe_state is PipeState.BROKEN
                 state.detected_leaks[target] = leak
-                if leak and not cell.leak_found:
-                    cell.leak_found = True
-                    state.leaks_found += 1
-                    points += cfg.points_leak_found
             self._award(state, points)
             return ActionResult(action, True, points=points, detected_pipe=has_pipe, detected_leak=leak)
 
@@ -292,6 +300,26 @@ class Game:
 
         return fail(f"unknown action type {kind}")  # pragma: no cover
 
+    def _buy(self, bot_id: int, action: Action) -> ActionResult:
+        """BUY: pay points for a power-up (uses the move; needs enough points; once per round)."""
+        state = self._states[bot_id]
+        power_up = action.power_up
+        if not isinstance(power_up, PowerUp):
+            return ActionResult(None, False, f"buy needs a PowerUp: {action!r}")
+        cost = self.config.power_up_cost(power_up)
+        if power_up in state.upgrades:
+            return ActionResult(action, False, f"{power_up.value} already bought")
+        if state.score < cost:
+            return ActionResult(action, False, f"{power_up.value} costs {cost} points, you have {state.score}")
+        state.score -= cost
+        state.spent += cost
+        state.upgrades.add(power_up)
+        self._on_power_up(bot_id, power_up)
+        return ActionResult(action, True, points=-cost)
+
+    def _on_power_up(self, bot_id: int, power_up: PowerUp) -> None:
+        """Apply one-off effects at the moment of purchase (UT works later, inside detect)."""
+
     # --- Internals -------------------------------------------------------------------------
     def _award(self, state: BotState, points: int) -> None:
         if points:
@@ -299,7 +327,7 @@ class Game:
             state.last_scored_turn = self.turn
 
     def _finish(self) -> None:
-        # End-of-game penalty: every pipe hole still open costs its digger
+        # End-of-round penalty: every pipe hole still open costs its digger
         penalty = self.config.penalty_open_pipe_hole
         for row in self._cells:
             for c in row:

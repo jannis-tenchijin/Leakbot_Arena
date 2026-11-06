@@ -31,16 +31,16 @@ def parse_cli():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--bots", nargs="+", default=DEFAULT_BOTS, help="module:Class in bots/")
     parser.add_argument("--seed", type=int, default=None, help="map seed for the first game")
-    parser.add_argument("--rounds", type=int, default=DEFAULT_CONFIG.max_rounds)
+    parser.add_argument("--moves", type=int, default=DEFAULT_CONFIG.max_moves, help="moves per bot per round")
     parser.add_argument("--leaks", type=int, default=DEFAULT_CONFIG.n_leaks)
     parser.add_argument("--size", type=int, nargs=2, metavar=("W", "H"), default=None)
-    parser.add_argument("--sim-games", type=int, default=100, help="games played by the SIMULATE button")
+    parser.add_argument("--sim-rounds", type=int, default=100, help="rounds played by the SIMULATE button")
     parser.add_argument("--lang", choices=["en", "ja"], default="en", help="UI language (L toggles)")
     args = parser.parse_args()
-    config = replace(DEFAULT_CONFIG, max_rounds=args.rounds, n_leaks=args.leaks)
+    config = replace(DEFAULT_CONFIG, max_moves=args.moves, n_leaks=args.leaks)
     if args.size:
         config = replace(config, width=args.size[0], height=args.size[1])
-    return args.bots, args.seed, config, args.sim_games, args.lang
+    return args.bots, args.seed, config, args.sim_rounds, args.lang
 
 
 def parse_url():
@@ -61,7 +61,7 @@ def parse_url():
 
 
 async def main() -> None:
-    specs, seed, config, sim_games, lang = parse_url() if WEB else parse_cli()
+    specs, seed, config, sim_rounds, lang = parse_url() if WEB else parse_cli()
     try:
         bot_classes = [load_bot(spec) for spec in specs]
     except (ImportError, ValueError) as exc:
@@ -72,7 +72,7 @@ async def main() -> None:
 
     from leakbots.gui.app import App  # imported late so --help works without a display
 
-    await App(bot_classes, config, seed, sim_games, lang).run_async()
+    await App(bot_classes, config, seed, sim_rounds, lang).run_async()
 
 
 if __name__ == "__main__":

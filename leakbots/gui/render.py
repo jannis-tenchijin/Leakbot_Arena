@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pygame
 
-from ..game import Game, TurnEvent
+from ..game import Game, MoveEvent
 from ..model import ActionType, Dir, PipeState, Pos, Surface
 from . import theme
 
@@ -172,7 +172,7 @@ class BoardRenderer:
         self._sprites.clear()
 
     # --- Events -> animations ----------------------------------------------------------------
-    def on_turn(self, event: TurnEvent, now: float, move_time: float) -> None:
+    def on_turn(self, event: MoveEvent, now: float, move_time: float) -> None:
         """Turn a game event into effects (and a smooth walk for moves)."""
         color = theme.BOT_COLORS[event.bot_id % len(theme.BOT_COLORS)]
         res = event.result
@@ -193,8 +193,12 @@ class BoardRenderer:
             self._add(Effect("spark", event.target, now, 0.6, theme.CLAMP))
         elif kind is ActionType.REFILL:
             self._add(Effect("fill", event.target, now, 0.3, theme.DIRT))
+        elif kind is ActionType.BUY:
+            self._add(Effect("spark", event.from_pos, now, 0.8, theme.ACCENT))
         if res.points:
-            self._add(Effect("points", event.target, now, 0.9, color, text=f"+{res.points}"))
+            anchor = event.target or event.from_pos  # BUY has no target square
+            text = f"+{res.points}" if res.points > 0 else str(res.points)
+            self._add(Effect("points", anchor, now, 0.9, color if res.points > 0 else theme.DANGER, text=text))
 
     def _add(self, effect: Effect) -> None:
         self.effects.append(effect)

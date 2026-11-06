@@ -3,6 +3,7 @@
 Every key holds both languages, so a missing translation is impossible by construction.
 Japanese is drawn with the bundled M PLUS Rounded 1c subset font: after adding Japanese text,
 re-run ``python tools/subset_font.py`` (``tests/test_i18n.py`` fails on missing glyphs).
+Terms: a *move* (手) is one action by one bot; a *round* (ラウンド) is one whole game.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ LANGS = ("en", "ja")
 _TEXT: dict[str, tuple[str, str]] = {
     # Header / status
     "subtitle": ("ARENA  ·  find and fix the leaks", "アリーナ ・ 漏水を見つけて直そう"),
-    "round": ("ROUND {r}/{max}", "ラウンド {r}/{max}"),
+    "move": ("MOVE {m}/{max}", "{m}/{max} 手"),
     "mode_single": ("SINGLE PLAYER", "シングルプレイ"),
     "mode_duel": ("1 VS 1", "1対1"),
     "mode_royale": ("BATTLE ROYALE {n}", "バトルロイヤル {n}"),
@@ -27,7 +28,7 @@ _TEXT: dict[str, tuple[str, str]] = {
     "step": ("STEP", "1手進む"),
     "restart": ("RESTART", "リスタート"),
     "new_map": ("NEW MAP", "新しいマップ"),
-    "simulate": ("SIMULATE {n}", "{n}回シミュレート"),
+    "simulate": ("SIMULATE {n} ROUNDS", "{n}ラウンド実行"),
     "cancel_sim": ("CANCEL SIM", "シミュレート中止"),
     "pipes_ghost": ("PIPES: GHOST", "配管: 半透明"),
     "pipes_hidden": ("PIPES: HIDDEN", "配管: 非表示"),
@@ -45,12 +46,15 @@ _TEXT: dict[str, tuple[str, str]] = {
     "card_holes_live": ("holes {h} (-{pen} at end)  invalid {i}", "穴 {h} (終了時 -{pen})  無効 {i}"),
     "card_holes_final": ("holes {h} (-{pen})  invalid {i}", "穴 {h} (-{pen})  無効 {i}"),
     "error": ("error: {e}", "エラー: {e}"),
+    "badge_ut": ("UT", "UT"),
+    "badge_sat": ("SAT", "衛星"),
+    "risk_legend": ("SATELLITE RISK  A low ... E high", "衛星リスク  A 低 … E 高"),
     # Simulation panel
     "sim_title": ("SIMULATION", "シミュレーション"),
-    "sim_idle": ("Plays {n} headless games with\nthe current bots on fresh maps.",
-                 "今のボットで新しいマップを\n{n}回、画面なしで対戦します。"),
-    "sim_progress": ("{d}/{t} games  (seeds {s}+)", "{d}/{t} ゲーム  (シード {s}〜)"),
-    "sim_head": ("{g} games  {sec}s  seed {s}", "{g}ゲーム  {sec}秒  シード {s}"),
+    "sim_idle": ("Plays {n} headless rounds with\nthe current bots on fresh maps.",
+                 "今のボットで新しいマップを\n{n}ラウンド、画面なしで対戦します。"),
+    "sim_progress": ("{d}/{t} rounds  (seeds {s}+)", "{d}/{t} ラウンド  (シード {s}〜)"),
+    "sim_head": ("{g} rounds  {sec}s  seed {s}", "{g}ラウンド  {sec}秒  シード {s}"),
     "sim_cancelled": ("(cancelled)", "(中止)"),
     "sim_avg": ("avg {a}", "平均 {a}"),
     "sim_wins": ("wins {w}%", "勝率 {w}%"),
@@ -64,8 +68,8 @@ _TEXT: dict[str, tuple[str, str]] = {
     "toast_png_only": ("Only .png files can be used as sprites", "画像は .png ファイルのみ使えます"),
     "toast_bad_image": ("Could not read that image", "画像を読み込めませんでした"),
     "toast_sprite_saved": ("Sprite saved for {name}", "{name} の画像を保存しました"),
-    # Game over
-    "game_over": ("GAME OVER", "ゲームオーバー"),
+    # End of round
+    "game_over": ("ROUND OVER", "ラウンド終了"),
     "final_score": ("Final score: {s}", "最終スコア: {s}"),
     "winner": ("Winner: {names} ({s})", "勝者: {names} ({s})"),
     "tie": ("Tie: {names} ({s})", "引き分け: {names} ({s})"),
@@ -91,89 +95,119 @@ _RULES: dict[str, dict[str, list[Section]]] = {
     "en": {
         "left": [
             ("GOAL", [
-                ("", "Find buried water leaks, fix them and leave no open pipe holes. "
-                     "The highest score after {rounds} rounds wins."),
+                ("", "Find buried water leaks, fix them and leave no open pipe holes. A round is one "
+                     "game: the highest score after {moves} moves wins."),
             ]),
-            ("TURNS", [
-                ("", "Bots act one at a time in a fixed order: exactly one action per turn."),
-                ("", "One round = every bot acts once. A game always lasts {rounds} rounds."),
-                ("", "Single player: your bot acts every turn."),
+            ("MOVES", [
+                ("", "Bots take turns in a fixed order. Each move is exactly one action. Every bot makes "
+                     "{moves} moves per round; in single player your bot makes every move."),
+                ("", "The square a bot stands on is detected automatically and for free: at the start "
+                     "and after every step."),
             ]),
             ("ACTIONS", [
-                ("", "Each action targets the neighbouring square UP, DOWN, LEFT or RIGHT, "
-                     "never the square the bot stands on."),
+                ("", "Actions aim at a neighbouring square UP, DOWN, LEFT or RIGHT, never at the "
+                     "bot's own square. DETECT and BUY need no direction."),
                 ("MOVE", "Step onto an untouched, empty square. Holes and other bots block the way."),
-                ("DETECT", "Learn privately whether a pipe is buried there. Works on any square inside the grid."),
+                ("DETECT", "Scan all four neighbouring squares at once and learn privately which hold a pipe."),
                 ("UNEARTH", "Dig the square open. It must be untouched and empty."),
                 ("FIX", "Repair a broken pipe in an unearthed square."),
                 ("REFILL", "Fill any hole back in, whoever dug it. A leaking pipe must be fixed first."),
+                ("BUY", "Buy a power-up with points. Uses the move and needs enough points; "
+                        "each power-up once per round."),
             ]),
-        ],
-        "right": [
             ("LIMITS", [
                 ("", "Bots can never leave the {w} x {h} grid."),
                 ("", "One bot or object per square. Bots cannot stand on unearthed squares."),
-                ("", "An invalid action (blocked, off the grid, wrong target, bot crash) "
-                     "wastes the turn and counts as an invalid move."),
+                ("", "An invalid action (blocked, off the grid, wrong target, not enough points, bot "
+                     "crash) wastes the move and counts as an invalid move."),
+            ]),
+        ],
+        "right": [
+            ("POWER-UPS", [
+                ("UT", "{ut} points. Every detect from now on also shows whether the scanned squares "
+                       "leak (scan a square again to update an old result). No points for leaks seen "
+                       "this way: unearth and fix them to score."),
+                ("SAT", "{sat} points. The Tenchijin satellite shows you the whole pipe network with "
+                              "a risk grade A to E per pipe square (E = most likely leaking). Squares it "
+                              "shows give no detect points."),
+                ("", "Grades are a hint, not proof: most leaks are graded E or D, but an intact pipe "
+                     "can be graded D, and a leak can be graded B."),
             ]),
             ("WHAT BOTS SEE", [
-                ("", "The whole map: untouched or unearthed squares, pipes in unearthed squares, "
-                     "which way they run and whether they are OK, broken or fixed."),
-                ("", "Buried pipes stay hidden until detected or unearthed. Detect results are private."),
-                ("", "Once a square has been unearthed, its pipe stays known to everyone, even after a refill."),
-                ("", "Bots are not told who dug a hole: keep track of your own."),
+                ("", "Everywhere on the map: which squares are untouched, dug up or filled back in. A "
+                     "dug-up square shows its pipe, which way it runs and whether it is OK, leaking "
+                     "or fixed."),
+                ("", "Buried pipes stay hidden until detected, unearthed or shown by the satellite. "
+                     "Detect results are private."),
+                ("", "Once a square has been dug up, its pipe stays known to everyone, even after a refill."),
+                ("", "Bots are not told who dug a hole: keep track of your own. Power-up purchases are public."),
             ]),
             ("SCORING", [
-                ("+{pd}", "Detect a pipe square for the first time. Only once per square per bot, "
-                          "and never for a square that was ever unearthed."),
+                ("+{pd}", "Discover a pipe square for the first time (detect or auto-detect). Once per "
+                          "square per bot, and never for a square that was ever dug up."),
                 ("+{lf}", "Find a leak: unearth a broken pipe (once per leak)."),
                 ("+{lx}", "Fix a leak."),
-                ("-{pen}", "At game end, for every pipe hole you dug that is still open."),
-                ("", "Ties: fewer invalid moves wins, then whoever reached their score first."),
+                ("-{pen}", "At the end of the round, for every pipe hole you dug that is still open."),
+                ("", "Power-ups cost their price in points. Ties: fewer invalid moves wins, then "
+                     "whoever reached their score first."),
             ]),
         ],
     },
     "ja": {
         "left": [
             ("目的", [
-                ("", "地中の配管の漏水を見つけて修理し、穴を開けたままにしないこと。"
-                     "{rounds}ラウンド後に最も得点の高いボットの勝ち。"),
+                ("", "地中の配管の漏水を見つけて修理し、穴を開けたままにしないこと。1ラウンド = 1ゲーム。"
+                     "{moves}手の後に最も得点の高いボットの勝ち。"),
             ]),
-            ("ターン", [
-                ("", "ボットは決まった順番で、1ターンに1回だけ行動する。"),
-                ("", "全ボットが1回ずつ行動すると1ラウンド。ゲームは必ず{rounds}ラウンド続く。"),
-                ("", "シングルプレイでは毎ターン自分のボットが行動する。"),
+            ("手番", [
+                ("", "ボットは決まった順番で交代に行動する。1手 = 1つの行動。各ボットは1ラウンドで"
+                     "{moves}手ずつ行動する。シングルプレイでは毎手自分のボットが行動する。"),
+                ("", "ボットが立っているマスは自動で無料探知される(開始時と、移動するたび)。"),
             ]),
             ("行動", [
-                ("", "どの行動も上下左右いずれかの隣のマスが対象。自分が立っているマスには使えない。"),
+                ("", "行動は上下左右いずれかの隣のマスが対象で、自分のマスには使えない。"
+                     "探知と購入は方向の指定が不要。"),
                 ("移動", "未掘削で空いているマスへ進む。穴と他のボットは通れない。"),
-                ("探知", "そのマスに配管が埋まっているかを自分だけが知る。盤面内ならどのマスでも可。"),
+                ("探知", "上下左右の4マスを同時にスキャンし、配管があるかを自分だけが知る。"),
                 ("掘削", "マスを掘り起こす。未掘削で空いているマスのみ。"),
                 ("修理", "掘り起こしたマスの壊れた配管を直す。"),
                 ("埋め戻し", "誰が掘った穴でも埋め戻せる。漏水中の配管は先に修理が必要。"),
+                ("購入", "得点でパワーアップを買う。1手を使い、得点が足りる場合のみ。"
+                         "各パワーアップは1ラウンドに1回。"),
             ]),
-        ],
-        "right": [
             ("制限", [
                 ("", "ボットは {w} × {h} の盤面の外には出られない。"),
                 ("", "1マスにはボットか物体が1つだけ。掘り起こしたマスには立てない。"),
-                ("", "無効な行動(通れない、盤面外、対象が違う、ボットのエラー)は"
-                     "ターンを消費し、無効手として数えられる。"),
+                ("", "無効な行動(通れない、盤面外、対象が違う、得点不足、ボットのエラー)は"
+                     "1手を消費し、無効手として数えられる。"),
+            ]),
+        ],
+        "right": [
+            ("パワーアップ", [
+                ("UT", "{ut}点。以後の探知で、スキャンしたマスの漏水の有無も分かる(古い結果は"
+                       "もう一度探知すると更新)。この方法で見つけた漏水に得点はなし:"
+                       "掘り起こして修理すると得点。"),
+                ("衛星", "{sat}点。天地人衛星で配管網全体と、配管マスごとのリスク等級A〜E"
+                         "(Eが最も漏水の可能性が高い)が見える。衛星で見えたマスは探知の得点なし。"),
+                ("", "等級はヒントであり確実ではない:漏水の多くはEかDだが、正常な配管がDのことも、"
+                     "漏水がBのこともある。"),
             ]),
             ("ボットに見えるもの", [
-                ("", "盤面全体:未掘削か掘削済みか、掘削済みマスの配管、その向き、"
-                     "正常・破損・修理済みの状態。"),
-                ("", "埋まった配管は探知か掘削をするまで見えない。探知の結果は自分だけのもの。"),
+                ("", "盤面のどこでも、未掘削・掘削済み・埋め戻し済みのマスが分かる。掘削済みのマスでは"
+                     "配管、その向き、正常・漏水・修理済みの状態が見える。"),
+                ("", "埋まった配管は探知・掘削・衛星まで見えない。探知の結果は自分だけのもの。"),
                 ("", "一度掘り起こされたマスの配管は、埋め戻した後も全員に知られたまま。"),
-                ("", "誰が穴を掘ったかは教えてもらえない。自分の穴は自分で記録しよう。"),
+                ("", "誰が穴を掘ったかは教えてもらえない。自分の穴は自分で記録しよう。"
+                     "パワーアップの購入は全員に公開される。"),
             ]),
             ("得点", [
-                ("+{pd}", "配管のマスを初めて探知。各ボット1マス1回だけで、"
+                ("+{pd}", "配管マスを初めて発見(探知または自動探知)。各ボット1マス1回だけで、"
                           "一度でも掘り起こされたマスは対象外。"),
                 ("+{lf}", "漏水を発見:壊れた配管を掘り起こす(漏水ごとに1回)。"),
                 ("+{lx}", "漏水を修理する。"),
-                ("-{pen}", "ゲーム終了時、自分が掘って開いたままの配管の穴1つにつき。"),
-                ("", "同点の場合:無効手が少ない方、次に先にその得点に達した方が上位。"),
+                ("-{pen}", "ラウンド終了時、自分が掘って開いたままの配管の穴1つにつき。"),
+                ("", "パワーアップは価格分の得点を消費する。同点の場合:無効手が少ない方、"
+                     "次に先にその得点に達した方が上位。"),
             ]),
         ],
     },
@@ -183,13 +217,15 @@ _RULES: dict[str, dict[str, list[Section]]] = {
 def rulebook(lang: str, cfg: GameConfig) -> tuple[list[Section], list[Section]]:
     """(left column, right column) sections with the current rule values filled in."""
     values = {
-        "rounds": cfg.max_rounds,
+        "moves": cfg.max_moves,
         "w": cfg.width,
         "h": cfg.height,
         "pd": cfg.points_pipe_detected,
         "lf": cfg.points_leak_found,
         "lx": cfg.points_leak_fixed,
         "pen": cfg.penalty_open_pipe_hole,
+        "ut": cfg.cost_ut,
+        "sat": cfg.cost_satellite,
     }
 
     def fill(sections: list[Section]) -> list[Section]:

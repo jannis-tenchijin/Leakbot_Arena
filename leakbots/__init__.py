@@ -2,8 +2,8 @@
 
 from .bot_api import ActionResult, BaseBot, BotView, CellInfo
 from .config import DEFAULT_CONFIG, GameConfig
-from .game import Game, TurnEvent
-from .model import Action, ActionType, Dir, PipeState, Pos, Surface
+from .game import Game, MoveEvent
+from .model import Action, ActionType, Dir, PipeState, Pos, PowerUp, Surface
 
 __all__ = [
     "Action",
@@ -18,8 +18,9 @@ __all__ = [
     "GameConfig",
     "PipeState",
     "Pos",
+    "PowerUp",
     "Surface",
-    "TurnEvent",
+    "MoveEvent",
 ]
 
 __version__ = "0.1.0"

@@ -26,7 +26,7 @@ def test_every_key_has_both_languages_with_same_placeholders():
 
 @pytest.mark.parametrize("lang", LANGS)
 def test_rulebook_uses_live_rule_values(lang):
-    cfg = GameConfig(max_rounds=321, points_leak_fixed=42)
+    cfg = GameConfig(max_moves=321, points_leak_fixed=42)
     left, right = rulebook(lang, cfg)
     text = " ".join(t for _, items in left + right for label, t in items) + " ".join(
         label for _, items in left + right for label, _ in items
@@ -47,4 +47,4 @@ def test_bundled_font_has_every_japanese_glyph():
 def test_default_config_rulebook_mentions_permanent_discovery():
     left, right = rulebook("en", DEFAULT_CONFIG)
     scoring = dict(right)["SCORING"]
-    assert any("never for a square that was ever unearthed" in text for _, text in scoring)
+    assert any("never for a square that was ever dug up" in text for _, text in scoring)
