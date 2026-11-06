@@ -37,6 +37,15 @@ FITTING = (110, 136, 158)
 WATER = (70, 170, 255)
 CLAMP = (72, 204, 96)
 
+# Satellite risk grades: green (low) to red (high)
+RISK_COLORS = {
+    "A": (96, 220, 110),
+    "B": (186, 226, 64),
+    "C": (255, 212, 0),
+    "D": (255, 142, 40),
+    "E": (255, 70, 80),
+}
+
 # One colour per seat
 BOT_COLORS = [
     (255, 212, 0),

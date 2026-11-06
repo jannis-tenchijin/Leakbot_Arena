@@ -38,6 +38,9 @@ class GameConfig:
     # Power-ups (bought with points; buying uses a move; each once per bot)
     cost_ut: int = 15  # detect also reports leaks
     cost_satellite: int = 25  # Tenchijin satellite: whole pipe network with A-E risk grades
+    # Risk grades: P(k) ~ risk_decay**k for k = 0..3 (0.3 -> 70.6 / 21.2 / 6.4 / 1.9 %).
+    # Intact pipes get A, B, C, D for k = 0..3; leaks get E, D, C, B.
+    risk_decay: float = 0.3
 
     def power_up_cost(self, power_up: PowerUp) -> int:
         return {PowerUp.UT: self.cost_ut, PowerUp.SATELLITE: self.cost_satellite}[power_up]
@@ -52,6 +55,8 @@ class GameConfig:
             raise ValueError("n_leaks must be >= 0 and max_moves >= 1")
         if self.cost_ut < 0 or self.cost_satellite < 0:
             raise ValueError("power-up costs must be >= 0")
+        if not 0.0 < self.risk_decay <= 1.0:
+            raise ValueError("risk_decay must be in (0, 1]")
 
 
 DEFAULT_CONFIG = GameConfig()

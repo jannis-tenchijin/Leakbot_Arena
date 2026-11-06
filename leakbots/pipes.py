@@ -15,9 +15,10 @@ readable instead of clumping into dense knots.
 from __future__ import annotations
 
 import random
+from collections.abc import Iterable
 from dataclasses import dataclass
 
-from .model import Dir, Pos
+from .model import RISK_GRADES, Dir, Pos
 
 # Shape tuning
 MIN_STRAIGHT = 3  # cells a head must run straight before it may turn
@@ -167,3 +168,25 @@ def pick_leaks(masks: list[list[int]], n_leaks: int, rng: random.Random) -> list
     """Choose n distinct pipe cells to be broken at game start."""
     pipe_cells = [(x, y) for y, row in enumerate(masks) for x, m in enumerate(row) if m]
     return rng.sample(pipe_cells, min(n_leaks, len(pipe_cells)))
+
+
+def pick_risk_grades(
+    masks: list[list[int]], leaks: Iterable[Pos], rng: random.Random, decay: float
+) -> dict[Pos, str]:
+    """Satellite risk grade of every pipe cell: a strong hint about leaks, not proof.
+
+    Each cell draws a level k = 0..3 with P(k) ~ decay**k. Intact pipes map k to A, B, C, D
+    and leaks map it mirrored to E, D, C, B, so the rarest grade of either kind is the one
+    that looks most like the other kind.
+    """
+    levels = range(len(RISK_GRADES) - 1)  # 4 levels per kind: A-D intact, E-B leaking
+    weights = [decay**k for k in levels]
+    leak_set = set(leaks)
+    grades: dict[Pos, str] = {}
+    for y, row in enumerate(masks):
+        for x, m in enumerate(row):
+            if not m:
+                continue
+            k = rng.choices(levels, weights)[0]
+            grades[(x, y)] = RISK_GRADES[-1 - k] if (x, y) in leak_set else RISK_GRADES[k]
+    return grades

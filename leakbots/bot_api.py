@@ -45,6 +45,14 @@ class CellInfo:
 
 
 @dataclass(frozen=True)
+class SatelliteReading:
+    """One pipe square seen from the Tenchijin satellite (see ``view.satellite``)."""
+
+    pipe_dirs: frozenset[Dir]  # directions the pipe runs
+    risk: str  # leak risk grade "A" (low) .. "E" (high); a strong hint, not proof. Fixed per round.
+
+
+@dataclass(frozen=True)
 class ActionResult:
     """Outcome of a bot's previous action (available as ``view.last_result``)."""
 
@@ -197,6 +205,16 @@ class BotView:
     def detected_leaks(self) -> Mapping[Pos, bool]:
         """Leak readings (pos -> leaking) from detects made after buying UT."""
         return MappingProxyType(self._game._states[self._bot_id].detected_leaks)
+
+    @property
+    def satellite(self) -> Mapping[Pos, SatelliteReading]:
+        """With the satellite: every pipe square -> SatelliteReading(pipe_dirs, risk). Empty before buying."""
+        return MappingProxyType(self._game._states[self._bot_id].satellite)
+
+    def risk(self, pos: Pos) -> str | None:
+        """Satellite risk grade "A".."E" of a pipe square; None without the satellite or off the pipes."""
+        reading = self._game._states[self._bot_id].satellite.get(pos)
+        return reading.risk if reading is not None else None
 
     @property
     def last_result(self) -> ActionResult | None:

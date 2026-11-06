@@ -10,10 +10,10 @@ import random
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
-from .bot_api import ActionResult, BaseBot, BotView
+from .bot_api import ActionResult, BaseBot, BotView, SatelliteReading
 from .config import DEFAULT_CONFIG, GameConfig
-from .model import Action, ActionType, Cell, Dir, PipeState, Pos, PowerUp, Surface
-from .pipes import generate_pipe_masks, pick_leaks
+from .model import Action, ActionType, Cell, Dir, PipeState, Pos, PowerUp, Surface, dirs_from_mask
+from .pipes import generate_pipe_masks, pick_leaks, pick_risk_grades
 
 
 @dataclass
@@ -37,6 +37,7 @@ class BotState:
     detected: dict[Pos, bool] = field(default_factory=dict)  # private memory: pos -> had a pipe
     detected_leaks: dict[Pos, bool] = field(default_factory=dict)  # UT readings: pos -> leaking
     discovered: set[Pos] = field(default_factory=set)  # squares that can no longer pay +1 to this bot
+    satellite: dict[Pos, SatelliteReading] = field(default_factory=dict)  # every pipe square, once bought
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,10 @@ class Game:
                 raise ValueError(f"Leak at {(x, y)} is not on a pipe")
             self._cells[y][x].pipe_state = PipeState.BROKEN
         self.leak_positions: tuple[Pos, ...] = tuple(leaks)
+        # Satellite risk grades come from their own RNG so the map/spawn/bot sequences stay unchanged
+        risk_rng = random.Random(f"risk-{self.seed}")
+        for (x, y), grade in pick_risk_grades(masks, leaks, risk_rng, config.risk_decay).items():
+            self._cells[y][x].risk = grade
 
         # Bots
         if spawns is None:
@@ -319,6 +324,17 @@ class Game:
 
     def _on_power_up(self, bot_id: int, power_up: PowerUp) -> None:
         """Apply one-off effects at the moment of purchase (UT works later, inside detect)."""
+        if power_up is PowerUp.SATELLITE:
+            # The buyer privately learns the whole network with risk grades. No points: every
+            # square counts as discovered, so later detects cannot pay +1 for it either.
+            state = self._states[bot_id]
+            for y, row in enumerate(self._cells):
+                for x, cell in enumerate(row):
+                    pos = (x, y)
+                    state.detected[pos] = cell.has_pipe
+                    state.discovered.add(pos)
+                    if cell.has_pipe:
+                        state.satellite[pos] = SatelliteReading(dirs_from_mask(cell.pipe_mask), cell.risk)
 
     # --- Internals -------------------------------------------------------------------------
     def _award(self, state: BotState, points: int) -> None:
