@@ -83,6 +83,36 @@ def test_detect_on_unearthed_pipe_scores_nothing():
     assert ok(g, Action.detect(Dir.DOWN)).points == 0
 
 
+def test_pipe_point_never_twice_after_dig_and_refill():
+    g = make_game(spawns=((1, 1),))
+    assert ok(g, Action.detect(Dir.DOWN)).points == 1  # (1, 2) pipe, first time
+    ok(g, Action.unearth(Dir.DOWN))
+    ok(g, Action.refill(Dir.DOWN))
+    assert ok(g, Action.detect(Dir.DOWN)).points == 0  # covered again, still discovered
+    assert g.states[0].score == 1
+
+
+def test_unearthed_pipe_counts_as_discovered_for_every_bot():
+    g = make_game(n_bots=2, spawns=((1, 1), (1, 3)))
+    ok(g, Action.unearth(Dir.UP), bot_id=1)  # bot 1 digs (1, 2) without detecting
+    ok(g, Action.refill(Dir.UP), bot_id=1)
+    assert ok(g, Action.detect(Dir.DOWN), bot_id=0).points == 0  # bot 0 saw it dug open
+    assert ok(g, Action.detect(Dir.UP), bot_id=1).points == 0
+    assert ok(g, Action.detect(Dir.RIGHT), bot_id=0).points == 0  # (2, 1): no pipe
+    ok(g, Action.move(Dir.RIGHT), bot_id=0)  # bot 0 -> (2, 1)
+    assert ok(g, Action.detect(Dir.DOWN), bot_id=0).points == 1  # (2, 2) never dug: +1
+
+
+def test_refilled_square_stays_public():
+    g = make_game(spawns=((1, 1),))
+    ok(g, Action.unearth(Dir.DOWN))
+    ok(g, Action.refill(Dir.DOWN))
+    info = BotView(g, 0).cell((1, 2))
+    assert info.surface is Surface.UNTOUCHED and info.revealed
+    assert info.has_pipe is True and info.pipe_state is PipeState.OK
+    assert info.pipe_dirs == {Dir.LEFT, Dir.RIGHT} and info.walkable
+
+
 def test_ut_upgrade_detects_leaks():
     g = make_game(config=replace(CONFIG, ut_upgrade=True))
     r = ok(g, Action.detect(Dir.DOWN))

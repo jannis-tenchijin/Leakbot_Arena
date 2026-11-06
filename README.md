@@ -50,14 +50,15 @@ and counts as an *invalid move*.
 
 **What bots see.** The whole public map at any time: which cells are untouched or unearthed,
 whether an unearthed cell has a pipe, which way it runs, and whether it is OK, broken or
-fixed. Detect results are private to the bot that detected them. Bots are **not** told who dug
-a hole — track your own digs.
+fixed. Once a cell has been unearthed its pipe stays public knowledge, even after a refill
+(`CellInfo.revealed`). Detect results are private to the bot that detected them. Bots are
+**not** told who dug a hole — track your own digs.
 
 **Scoring.**
 
 | Event                                                         | Points |
 |---------------------------------------------------------------|-------:|
-| Detect an untouched pipe cell (once per cell per bot)         |     +1 |
+| Detect a pipe cell for the first time (once per cell per bot, never for a cell that was ever unearthed) | +1 |
 | Find a leak (unearth a broken pipe, once per leak)            |     +5 |
 | Fix a leak                                                    |    +15 |
 | Game end: each pipe hole you dug that is still open           |     −2 |
@@ -78,6 +79,8 @@ Ranking: highest score, then fewer invalid moves, then whoever reached their sco
 | SIMULATE 100 / `M`    | play 100 headless games with the current bots, show statistics  |
 | PIPES / `P`           | game-master toggle: buried pipes hidden or faintly visible       |
 | MARKS / `D`           | show each bot's private detect results as dots                   |
+| RULES / `H`           | open the rulebook: every action, its limits and the scoring      |
+| EN \| 日本語 / `L`      | switch all text between English and Japanese (top right)         |
 | Speed slider / `↑ ↓`  | 1 – 500 moves per second, far right = MAX                        |
 
 **Custom sprite:** drag a `.png` onto a bot's scoreboard card. It is saved as
@@ -127,7 +130,7 @@ The same Python code runs in the browser via [pygbag](https://pypi.org/project/p
 (pygame compiled to WebAssembly). Every push to `main` runs the tests, builds the web version
 and publishes it to GitHub Pages (`.github/workflows/pages.yml`).
 
-- Pick bots and map with URL parameters: `?bots=random_bot,my_bot:MyBot&seed=42`.
+- Pick bots, map and language with URL parameters: `?bots=random_bot,my_bot:MyBot&seed=42&lang=ja`.
   Only bots committed to `bots/` are available online.
 - Sprites: commit `bots/sprites/<ClassName>.png` (drag-and-drop works on the desktop only).
 - Build and test locally:
@@ -143,12 +146,21 @@ and publishes it to GitHub Pages (`.github/workflows/pages.yml`).
 main.py              GUI entry point (desktop and browser)
 simulate.py          headless benchmark CLI
 tools/build_web.py   browser build (pygbag) used by the Pages workflow
+tools/subset_font.py shrinks the Japanese font to the glyphs the UI uses
 leakbots/            engine (pure Python, no pygame) + gui/ (pygame viewer)
   config.py          GameConfig: grid size, leaks, rounds, point values
   pipes.py           random pipe network generator
   game.py            rules, turn order, scoring
   bot_api.py         BaseBot, BotView, CellInfo, ActionResult
   simulation.py      run many games, aggregate statistics
+  gui/i18n.py        English/Japanese UI text and the rulebook
+  gui/fonts/         M PLUS Rounded 1c subset (SIL OFL 1.1, see OFL.txt)
 bots/                competitor bots + sprites/
 tests/               pytest suite (rules, pipes, simulation, headless GUI)
 ```
+
+## Credits
+
+Japanese text uses [M PLUS Rounded 1c](https://fonts.google.com/specimen/M+PLUS+Rounded+1c)
+by Coji Morishita / M+ Fonts Project, licensed under the SIL Open Font License 1.1
+([leakbots/gui/fonts/OFL.txt](leakbots/gui/fonts/OFL.txt)), subset to the characters the game uses.

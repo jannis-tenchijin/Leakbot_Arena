@@ -5,7 +5,7 @@ Benchmark: python simulate.py --bots <your_name>_bot:MyBot --games 100
 
 Moves (each targets the neighbouring cell in a Dir: UP, DOWN, LEFT, RIGHT):
     Action.move(d)     walk onto an untouched, free cell
-    Action.detect(d)   privately learn if a pipe is buried there      (+1 per new pipe cell)
+    Action.detect(d)   privately learn if a pipe is buried there      (+1 first time, never-dug cells)
     Action.unearth(d)  dig the cell open; holes cannot be walked on   (+5 if it reveals a leak)
     Action.fix(d)      repair an unearthed broken pipe                (+15)
     Action.refill(d)   fill any hole again (not a still-leaking pipe)

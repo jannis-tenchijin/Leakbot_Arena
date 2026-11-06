@@ -6,7 +6,7 @@ Desktop:
     python main.py --bots my_bot:MyBot --seed 7 --size 30 30
 
 Browser: the same choices come from the page URL, e.g.
-    https://<user>.github.io/Leakbot_Arena/?bots=random_bot,random_bot&seed=7
+    https://<user>.github.io/Leakbot_Arena/?bots=random_bot,random_bot&seed=7&lang=ja
 """
 
 from __future__ import annotations
@@ -35,15 +35,16 @@ def parse_cli():
     parser.add_argument("--leaks", type=int, default=DEFAULT_CONFIG.n_leaks)
     parser.add_argument("--size", type=int, nargs=2, metavar=("W", "H"), default=None)
     parser.add_argument("--sim-games", type=int, default=100, help="games played by the SIMULATE button")
+    parser.add_argument("--lang", choices=["en", "ja"], default="en", help="UI language (L toggles)")
     args = parser.parse_args()
     config = replace(DEFAULT_CONFIG, max_rounds=args.rounds, n_leaks=args.leaks)
     if args.size:
         config = replace(config, width=args.size[0], height=args.size[1])
-    return args.bots, args.seed, config, args.sim_games
+    return args.bots, args.seed, config, args.sim_games, args.lang
 
 
 def parse_url():
-    """Read ?bots=a,b&seed=N from the page URL (pygbag exposes the JS window as platform.window)."""
+    """Read ?bots=a,b&seed=N&lang=ja from the page URL (pygbag exposes the JS window as platform.window)."""
     from urllib.parse import parse_qs
 
     try:
@@ -55,11 +56,12 @@ def parse_url():
     specs = [s for s in query.get("bots", [""])[-1].split(",") if s] or DEFAULT_BOTS
     seed_text = query.get("seed", [""])[-1]
     seed = int(seed_text) if seed_text.isdigit() else None
-    return specs, seed, DEFAULT_CONFIG, 100
+    lang = "ja" if query.get("lang", [""])[-1].lower().startswith("ja") else "en"
+    return specs, seed, DEFAULT_CONFIG, 100, lang
 
 
 async def main() -> None:
-    specs, seed, config, sim_games = parse_url() if WEB else parse_cli()
+    specs, seed, config, sim_games, lang = parse_url() if WEB else parse_cli()
     try:
         bot_classes = [load_bot(spec) for spec in specs]
     except (ImportError, ValueError) as exc:
@@ -70,7 +72,7 @@ async def main() -> None:
 
     from leakbots.gui.app import App  # imported late so --help works without a display
 
-    await App(bot_classes, config, seed, sim_games).run_async()
+    await App(bot_classes, config, seed, sim_games, lang).run_async()
 
 
 if __name__ == "__main__":

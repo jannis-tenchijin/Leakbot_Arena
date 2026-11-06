@@ -116,6 +116,7 @@ class Cell:
     pipe_mask: int = 0  # connection bits (see Dir.bit); 0 means no pipe
     pipe_state: PipeState | None = None
     leak_found: bool = False  # a bot has already been credited for finding this leak
+    revealed: bool = False  # was unearthed at some point: its pipe is public knowledge forever
     dug_by: int | None = None  # bot id of the latest digger (game master only)
     occupant: int | None = None  # bot id standing here
 

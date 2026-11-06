@@ -25,10 +25,11 @@ class CellInfo:
 
     pos: Pos
     surface: Surface
-    has_pipe: bool | None  # None while untouched (unknown), True/False once unearthed
-    pipe_state: PipeState | None  # OK / BROKEN / FIXED for unearthed pipes, else None
-    pipe_dirs: frozenset[Dir]  # directions an unearthed pipe runs (empty if unknown)
+    has_pipe: bool | None  # None if never unearthed (unknown), else True/False
+    pipe_state: PipeState | None  # OK / BROKEN / FIXED for revealed pipes, else None
+    pipe_dirs: frozenset[Dir]  # directions a revealed pipe runs (empty if unknown)
     bot: int | None  # id of the bot standing here, if any
+    revealed: bool = False  # unearthed now or earlier: stays known after a refill
 
     @property
     def walkable(self) -> bool:
@@ -126,7 +127,7 @@ class BotView:
         if not self.in_bounds(pos):
             raise IndexError(f"{pos} is outside the {self.width}x{self.height} grid")
         c = self._game._cells[pos[1]][pos[0]]
-        if c.surface is Surface.UNEARTHED:
+        if c.revealed:  # everyone saw this square dug open; a refill does not hide it again
             show_dirs = self._game.config.reveal_pipe_dirs
             return CellInfo(
                 pos,
@@ -135,6 +136,7 @@ class BotView:
                 c.pipe_state,
                 dirs_from_mask(c.pipe_mask) if show_dirs else frozenset(),
                 c.occupant,
+                revealed=True,
             )
         return CellInfo(pos, c.surface, None, None, frozenset(), c.occupant)
 

@@ -235,8 +235,10 @@ class Game:
             points = 0
             has_pipe = cell.has_pipe
             state.detected[target] = has_pipe
-            # +1 for each untouched pipe cell this bot detects for the first time
-            if has_pipe and cell.surface is Surface.UNTOUCHED and target not in state.scored_detects:
+            # +1 only for a pipe square that is new to this bot: never detected by it before and
+            # never unearthed by anyone (unearthed squares were seen by every bot; refilling
+            # does not make a pipe "undiscovered")
+            if has_pipe and not cell.revealed and target not in state.scored_detects:
                 state.scored_detects.add(target)
                 state.pipes_detected += 1
                 points += cfg.points_pipe_detected
@@ -257,6 +259,7 @@ class Game:
             if cell.occupant is not None:
                 return fail("a bot is standing there")
             cell.surface = Surface.UNEARTHED
+            cell.revealed = True
             cell.dug_by = bot_id  # only the game master tracks diggers
             points = 0
             if cell.pipe_state is PipeState.BROKEN and not cell.leak_found:

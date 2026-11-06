@@ -90,6 +90,15 @@ class BoardRenderer:
         pygame.draw.rect(hole, theme.HOLE_RIM, (0, 0, t, t), width=2)
         self.hole_tile = hole
 
+        # Refilled: walkable again, but a patch of fresh soil shows it was dug before
+        refilled = self.ground_tiles[0].copy()
+        patch = pygame.Rect(0, 0, t - 6, t - 6)
+        patch.center = (t // 2, t // 2)
+        pygame.draw.rect(refilled, theme.HOLE_RIM, patch, border_radius=max(2, t // 6))
+        for _ in range(4):
+            pygame.draw.rect(refilled, theme.HOLE, (rng.randrange(5, t - 7), rng.randrange(5, t - 7), 2, 2))
+        self.refilled_tile = refilled
+
         # Pipe gradient strips: lit in the upper middle, dark at the rims -> looks round
         pw = self.pipe_width
         strip = pygame.Surface((t, pw), pygame.SRCALPHA)
@@ -214,6 +223,8 @@ class BoardRenderer:
                 pos = (ox + x * t, oy + y * t)
                 if cell.surface is Surface.UNEARTHED:
                     surf.blit(self.hole_tile, pos)
+                elif cell.revealed:
+                    surf.blit(self.refilled_tile, pos)
                 else:
                     checker = (x + y) % 2
                     surf.blit(self.ground_tiles[checker * 2 + (x * 7 + y * 13) % 2], pos)

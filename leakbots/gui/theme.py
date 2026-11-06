@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 import pygame
 
@@ -49,7 +50,20 @@ BOT_COLORS = [
 ]
 
 _MONO = "menlo,consolas,dejavusansmono,couriernew,monospace"
-_font_cache: dict[tuple[int, bool], pygame.font.Font] = {}
+_FONT_DIR = Path(__file__).resolve().parent / "fonts"
+# Bundled Japanese font (M PLUS Rounded 1c, SIL OFL 1.1), subset by tools/subset_font.py
+JP_FONT_FILES = {
+    "Regular": _FONT_DIR / "MPLUSRounded1c-Regular.subset.ttf",
+    "Bold": _FONT_DIR / "MPLUSRounded1c-Bold.subset.ttf",
+}
+_font_cache: dict[tuple[bool, int, bool], pygame.font.Font] = {}
+_language = "en"
+
+
+def set_language(lang: str) -> None:
+    """Switch the font family used by font(): Japanese needs the bundled CJK font."""
+    global _language
+    _language = lang
 
 
 def reset_fonts() -> None:
@@ -64,11 +78,18 @@ def _default_font(size: int, bold: bool) -> pygame.font.Font:
     return f
 
 
-def font(size: int, bold: bool = False) -> pygame.font.Font:
-    """Cached monospace font; the browser build has no system fonts and uses pygame's default."""
-    key = (size, bold)
+def font(size: int, bold: bool = False, japanese: bool | None = None) -> pygame.font.Font:
+    """Cached UI font for the current language (or force the Japanese font with japanese=True).
+
+    English uses a system monospace font on the desktop and pygame's default font in the
+    browser (no system fonts there); Japanese always uses the bundled M PLUS Rounded 1c.
+    """
+    jp = _language == "ja" if japanese is None else japanese
+    key = (jp, size, bold)
     if key not in _font_cache:
-        if sys.platform == "emscripten":
+        if jp:
+            _font_cache[key] = pygame.font.Font(str(JP_FONT_FILES["Bold" if bold else "Regular"]), size)
+        elif sys.platform == "emscripten":
             _font_cache[key] = _default_font(size, bold)
         else:
             try:

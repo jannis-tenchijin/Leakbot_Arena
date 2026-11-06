@@ -40,6 +40,18 @@ leaking water pipes on a grid. Python 3.10+, pygame-ce for the viewer, pytest fo
 - Randomness: the engine uses `Game.rng` seeded from `seed`; bots get `self.rng`. Same seed
   must replay the same game (`test_same_seed_same_game`).
 
+## UI text and languages (English / Japanese)
+
+- Every visible string goes through `leakbots/gui/i18n.py` (`App.t(key)`); no literals in
+  `gui/app.py`. Each key holds both languages with identical `{placeholders}` (tested).
+- The rulebook (`i18n.rulebook`) fills numbers from `GameConfig`; when rules change, update
+  both languages there and the README tables.
+- Japanese uses the bundled M PLUS Rounded 1c *subset* in `leakbots/gui/fonts/` (SIL OFL;
+  keep `OFL.txt`). After adding Japanese text, re-run
+  `.venv/bin/python tools/subset_font.py <folder with the full MPLUSRounded1c-*.ttf>`
+  (download from google/fonts `ofl/mplusrounded1c`); `tests/test_i18n.py` fails on missing glyphs.
+- Sidebar text must fit 340 px in both languages (`test_sidebar_text_fits` in the GUI tests).
+
 ## Invariants covered by tests
 
 - Pipe networks: one component, reciprocal links, no interior dead ends, off-map links only

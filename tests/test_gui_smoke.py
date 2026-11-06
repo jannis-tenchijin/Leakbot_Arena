@@ -66,6 +66,51 @@ def test_keyboard_controls(app):
     assert app.playing
 
 
+def test_language_switch_and_rulebook(app):
+    def key(k):
+        app.handle_event(pygame.event.Event(pygame.KEYDOWN, key=k))
+
+    for lang in ("en", "ja"):
+        app.set_language(lang)
+        app.draw(1.0)
+        key(pygame.K_h)  # open rulebook
+        assert app.show_rules
+        app.draw(1.0)
+        key(pygame.K_SPACE)  # game keys are ignored while the rulebook is open
+        assert not app.playing
+        key(pygame.K_ESCAPE)  # Esc closes the rulebook, not the app
+        assert not app.show_rules and app.running
+
+    key(pygame.K_l)
+    assert app.lang == "en"
+    # Clicking the 日本語 half of the switch selects Japanese
+    seg = app.lang_switch.rect
+    pos = (seg.right - 5, seg.centery)
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=pos))
+    assert app.lang == "ja"
+    # Rules button opens the rulebook; a click outside the panel closes it
+    rb = app.rules_button.rect.center
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=rb))
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=rb))
+    assert app.show_rules
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=(2, 2)))
+    assert not app.show_rules
+
+
+@pytest.mark.parametrize("lang", ["en", "ja"])
+def test_sidebar_text_fits(app, lang):
+    from leakbots.gui import theme
+
+    app.set_language(lang)
+    for key in ("hint_keys1", "hint_keys2", "hint_drop", "hint_web_sprite", "subtitle"):
+        size = 12 if key == "subtitle" else 11
+        assert theme.font(size).size(app.t(key))[0] <= app_module.SIDEBAR_W, (lang, key)
+    logo_w = theme.font(app.logo_size, bold=True, japanese=False).size("LEAKBOTS")[0]
+    assert app.sidebar_x + logo_w < app.rules_button.rect.x  # logo clear of the corner buttons
+    for button in app.buttons + [app.rules_button]:
+        assert theme.font(button.size, bold=True).size(button.label)[0] <= button.rect.w - 8, button.label
+
+
 def test_simulation_runs_across_frames(app):
     app.toggle_simulation()
     assert app.simulating
