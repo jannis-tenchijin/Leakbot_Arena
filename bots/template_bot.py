@@ -14,6 +14,9 @@ Actions (directional ones aim at the neighbouring square in a Dir: UP, DOWN, LEF
     Action.refill(d)   fill any hole again (not a still-leaking pipe)
     Action.buy(PowerUp.UT)         15 points: detects also report leaks
     Action.buy(PowerUp.SATELLITE)  25 points: whole pipe network with A-E risk grades
+    Action.chain(d)    punk only, once per round: ball and chain on an adjacent opponent
+Move 200: a punk pickup appears (view.punk_pos); step on it for +10 and a mohawk.
+Chained bots need two moves per step (view.chained_moves(), view.dragging).
 At the end of the round every pipe hole you dug and left open costs -2.
 
 Useful view members (see leakbots/bot_api.py for all):

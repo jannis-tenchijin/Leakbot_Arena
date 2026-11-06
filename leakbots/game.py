@@ -29,6 +29,11 @@ from .model import (
 from .pipes import generate_pipe_masks, pick_leaks, pick_risk_grades
 
 
+# ActionResult.message of two special successful moves (the GUI animates them)
+MSG_DRAGGING = "dragging the ball and chain"
+MSG_PUNK = "collected the punk upgrade"
+
+
 @dataclass
 class BotState:
     """Engine-side bookkeeping for one bot (position, score breakdown, private memory)."""
@@ -285,16 +290,18 @@ class Game:
             if state.chained_left > 0 and state.dragging is not action.direction:
                 # Ball and chain: this move only drags the ball; the next MOVE this way steps
                 state.dragging = action.direction
-                return ActionResult(action, True, message="dragging the ball and chain")
+                return ActionResult(action, True, message=MSG_DRAGGING)
             state.dragging = None
             self.cell(state.pos).occupant = None
             cell.occupant = bot_id
             state.pos = target
             # Free auto-detect of the square the bot just stepped onto
             points, scan, scan_leaks = self._scan(bot_id, [target])
+            message = ""
             if cell.item == PUNK_ITEM:
                 points += self._collect_punk(bot_id, cell)
-            return ActionResult(action, True, points=points, scan=scan, scan_leaks=scan_leaks)
+                message = MSG_PUNK
+            return ActionResult(action, True, message, points=points, scan=scan, scan_leaks=scan_leaks)
 
         if kind is ActionType.CHAIN:
             if PowerUp.PUNK not in state.upgrades:

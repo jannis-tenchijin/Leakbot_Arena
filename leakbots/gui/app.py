@@ -123,6 +123,7 @@ class App:
 
     # --- Game control -----------------------------------------------------------------------
     def new_game(self, seed: int | None = None) -> None:
+        self._punk_announced = False
         self.seed = seed if seed is not None else random.randrange(1_000_000)
         self.game = Game(self.bot_classes, self.config, self.seed)
         self.renderer.set_game(self.game)
@@ -218,6 +219,10 @@ class App:
                     self._step(now)
         if self.game.over:
             self.playing = False
+
+        if self.game.punk_pos is not None and not self._punk_announced:
+            self._punk_announced = True
+            self.toast(self.t("toast_punk"), theme.DANGER)
 
         # Simulated rounds share the frame with live play; slow frames (throttled tab) get more time
         if self.simulating:
@@ -557,12 +562,13 @@ class App:
         if img is not None:
             self.screen.blit(img, img.get_rect(center=pr.center))
         else:
-            draw_robot(self.screen, pr.center, portrait - 4, color, g.states[bot_id].facing)
+            draw_robot(self.screen, pr.center, portrait - 4, color, g.states[bot_id].facing,
+                       PowerUp.PUNK in st.upgrades)
 
         tx = pr.right + 10
         holes = st.open_holes if g.over else g.open_pipe_holes(bot_id)
         name = self._text(self.labels[bot_id], (tx, rect.y + 6), 14, color, bold=True)
-        self._draw_badges(st.upgrades, name.right + 6, rect.y + 6)
+        self._draw_badges(st.upgrades, name.right + 6, rect.y + 6, st.chained_left)
         self._text(str(st.score), (rect.right - 10, rect.y + 4), 22 if rect.h >= 40 else 16, theme.TEXT,
                    bold=True, right=True)
         if rect.h >= 44:
@@ -575,12 +581,17 @@ class App:
             if st.last_error:
                 self._text(self.t("error", e=st.last_error)[:40], (tx, rect.y + 60), 11, theme.DANGER)
 
-    def _draw_badges(self, upgrades, x: int, y: int) -> None:
-        """Small pills for bought power-ups next to a bot's name."""
-        for power_up, key, color in ((PowerUp.UT, "badge_ut", theme.WATER), (PowerUp.SATELLITE, "badge_sat", theme.ACCENT)):
-            if power_up not in upgrades:
-                continue
-            img = theme.font(10, bold=True).render(self.t(key), True, (14, 16, 38))
+    def _draw_badges(self, upgrades, x: int, y: int, chained: int = 0) -> None:
+        """Small pills next to a bot's name: power-ups, punk, and a ball-and-chain countdown."""
+        pills = [(self.t(key), color) for power_up, key, color in (
+            (PowerUp.UT, "badge_ut", theme.WATER),
+            (PowerUp.SATELLITE, "badge_sat", theme.ACCENT),
+            (PowerUp.PUNK, "badge_punk", theme.DANGER),
+        ) if power_up in upgrades]
+        if chained:
+            pills.append((self.t("badge_chained", n=chained), theme.MUTED))
+        for text, color in pills:
+            img = theme.font(10, bold=True).render(text, True, (14, 16, 38))
             pill = img.get_rect(topleft=(x + 5, y + 2)).inflate(10, 4)
             pygame.draw.rect(self.screen, color, pill, border_radius=7)
             self.screen.blit(img, img.get_rect(center=pill.center))

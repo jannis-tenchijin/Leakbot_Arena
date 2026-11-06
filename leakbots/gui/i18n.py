@@ -73,6 +73,9 @@ _TEXT: dict[str, tuple[str, str]] = {
     "error": ("error: {e}", "エラー: {e}"),
     "badge_ut": ("UT", "UT"),
     "badge_sat": ("SAT", "衛星"),
+    "badge_punk": ("PUNK", "パンク"),
+    "badge_chained": ("CHAINED {n}", "鉄球 {n}"),
+    "toast_punk": ("A PUNK upgrade appeared on the map!", "パンクアイテムが出現!"),
     "risk_legend": ("SATELLITE RISK  A low ... E high", "衛星リスク  A 低 … E 高"),
     # Simulation panel
     "sim_title": ("SIMULATION", "シミュレーション"),
@@ -161,6 +164,7 @@ _RULES: dict[str, dict[str, list[Section]]] = {
                 ("REFILL", "Fill any hole back in, whoever dug it. A leaking pipe must be fixed first."),
                 ("BUY", "Buy a power-up with points. Uses the move and needs enough points; "
                         "each power-up once per round."),
+                ("CHAIN", "Punk only, once per round: ball and chain on an adjacent opponent."),
             ]),
             ("LIMITS", [
                 ("", "Bots can never leave the {w} x {h} grid."),
@@ -179,6 +183,8 @@ _RULES: dict[str, dict[str, list[Section]]] = {
                               "shows give no detect points."),
                 ("", "Grades are a hint, not proof: most leaks are graded E or D, but an intact pipe "
                      "can be graded D, and a leak can be graded B."),
+                ("PUNK", "Free pickup at move {punk} on a random square: step on it for +{punk_pts} and a "
+                         "mohawk, plus one ball and chain (chained bots need 2 moves per step for {chain} moves)."),
             ]),
             ("WHAT BOTS SEE", [
                 ("", "Everywhere on the map: which squares are untouched, dug up or filled back in. A "
@@ -221,6 +227,7 @@ _RULES: dict[str, dict[str, list[Section]]] = {
                 ("埋め戻し", "誰が掘った穴でも埋め戻せる。漏水中の配管は先に修理が必要。"),
                 ("購入", "得点でパワーアップを買う。1手を使い、得点が足りる場合のみ。"
                          "各パワーアップは1ラウンドに1回。"),
+                ("鉄球", "パンクのみ、1ラウンドに1回:隣の相手に鉄球付きの鎖をつける。"),
             ]),
             ("制限", [
                 ("", "ボットは {w} × {h} の盤面の外には出られない。"),
@@ -238,6 +245,9 @@ _RULES: dict[str, dict[str, list[Section]]] = {
                          "(Eが最も漏水の可能性が高い)が見える。衛星で見えたマスは探知の得点なし。"),
                 ("", "等級はヒントであり確実ではない:漏水の多くはEかDだが、正常な配管がDのことも、"
                      "漏水がBのこともある。"),
+                ("パンク", "{punk}手目にランダムなマスに現れる無料アイテム。踏むと+{punk_pts}点と赤いモヒカン。"
+                           "対戦では鉄球付きの鎖も1回使える:つけられたボットは次の{chain}手の間、"
+                           "1歩に2手かかる。"),
             ]),
             ("ボットに見えるもの", [
                 ("", "盤面のどこでも、未掘削・掘削済み・埋め戻し済みのマスが分かる。掘削済みのマスでは"
@@ -273,6 +283,9 @@ def rulebook(lang: str, cfg: GameConfig) -> tuple[list[Section], list[Section]]:
         "pen": cfg.penalty_open_pipe_hole,
         "ut": cfg.cost_ut,
         "sat": cfg.cost_satellite,
+        "punk": cfg.punk_spawn_move,
+        "punk_pts": cfg.points_punk,
+        "chain": cfg.chain_duration,
     }
 
     def fill(sections: list[Section]) -> list[Section]:

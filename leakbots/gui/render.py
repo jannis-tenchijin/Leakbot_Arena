@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pygame
 
-from ..game import Game, MoveEvent
-from ..model import ActionType, Dir, PipeState, Pos, PowerUp, Surface
+from ..game import MSG_DRAGGING, MSG_PUNK, Game, MoveEvent
+from ..model import PUNK_ITEM, ActionType, Dir, PipeState, Pos, PowerUp, Surface
 from . import theme
 
 _STRAIGHT = {Dir.UP.bit | Dir.DOWN.bit, Dir.LEFT.bit | Dir.RIGHT.bit}
@@ -181,7 +181,14 @@ class BoardRenderer:
             self._add(Effect("invalid", event.from_pos, now, 0.3, theme.DANGER))
             return
         kind = event.action.type
-        if kind is ActionType.MOVE:
+        if kind is ActionType.MOVE and res.message == MSG_DRAGGING:
+            # Chained: this move only dragged the ball and chain (no step)
+            rng = random.Random(event.turn)
+            parts = [(rng.uniform(-0.6, 0.6), rng.uniform(-0.6, -0.2)) for _ in range(4)]
+            self._add(Effect("dust", event.from_pos, now, 0.35, theme.MUTED, particles=parts))
+        elif kind is ActionType.MOVE:
+            if res.message == MSG_PUNK:
+                self._add(Effect("spark", event.target, now, 0.8, theme.DANGER))
             if move_time > 0:
                 self._tween[event.bot_id] = (self.cell_center(event.from_pos), self.cell_center(event.target), now, move_time)
         elif kind is ActionType.DETECT:
@@ -198,6 +205,9 @@ class BoardRenderer:
             self._add(Effect("fill", event.target, now, 0.3, theme.DIRT))
         elif kind is ActionType.BUY:
             self._add(Effect("spark", event.from_pos, now, 0.8, theme.ACCENT))
+        elif kind is ActionType.CHAIN:
+            self._add(Effect("ping", event.target, now, 0.6, theme.DANGER))
+            self._add(Effect("invalid", event.target, now, 0.6, (60, 60, 70)))  # clank!
         if res.points:
             anchor = event.target or event.from_pos  # DETECT and BUY have no target square
             text = f"+{res.points}" if res.points > 0 else str(res.points)
@@ -268,9 +278,16 @@ class BoardRenderer:
         if show_marks:
             self._draw_marks(surf)
 
-        # 5) Bots, then effects on top
+        # 4b) Punk pickup lying on the board
+        if g.punk_pos is not None and g.cell(g.punk_pos).item == PUNK_ITEM:
+            self._draw_punk_pickup(surf, g.punk_pos, now)
+
+        # 5) Bots (ball and chain behind them, mohawk on top), then effects on top
         for bot_id, state in enumerate(g.states):
-            self._draw_bot(surf, bot_id, state.pos, state.facing, now, sprites[bot_id], animate)
+            if state.chained_left > 0:
+                self._draw_ball_and_chain(surf, bot_id, state, now)
+            self._draw_bot(surf, bot_id, state.pos, state.facing, now, sprites[bot_id], animate,
+                           mohawk=PowerUp.PUNK in state.upgrades)
         self._draw_effects(surf, now)
 
     def _draw_leak(self, surf: pygame.Surface, rect: pygame.Rect, now: float, alpha: int) -> None:
@@ -365,8 +382,40 @@ class BoardRenderer:
             del self._tween[bot_id]
         return self.cell_center(pos)
 
+    def _draw_punk_pickup(self, surf: pygame.Surface, pos: Pos, now: float) -> None:
+        """A pulsing black badge with a red mohawk: the punk upgrade waiting to be collected."""
+        t = self.tile
+        cx, cy = self.cell_center(pos)
+        glow = 0.5 + 0.5 * math.sin(now * 5)
+        pygame.draw.circle(surf, _lerp(theme.DANGER, (255, 255, 255), 0.3 * glow), (cx, cy), t * (0.44 + 0.04 * glow), 2)
+        pygame.draw.circle(surf, (20, 20, 26), (cx, cy + t * 0.08), t * 0.3)
+        draw_mohawk(surf, cx, cy - t * 0.16, t * 0.9)
+        pygame.draw.circle(surf, (240, 240, 240), (cx - t * 0.1, cy + t * 0.08), max(1, t // 16))
+        pygame.draw.circle(surf, (240, 240, 240), (cx + t * 0.1, cy + t * 0.08), max(1, t // 16))
+
+    def _draw_ball_and_chain(self, surf: pygame.Surface, bot_id: int, state, now: float) -> None:
+        """Iron ball trailing behind a chained bot (pulled closer while it is dragging)."""
+        t = self.tile
+        cx, cy = self._bot_center(bot_id, state.pos, now)
+        back = state.dragging or state.facing
+        dx, dy = back.delta
+        reach = 0.5 if state.dragging else 0.62  # dragging: the ball is being hauled in
+        if dx == 0:  # moving up/down: hang the ball beside the treads so the body doesn't hide it
+            bx, by = cx + t * 0.42, cy - dy * t * reach * 0.6 + t * 0.2
+        else:
+            bx, by = cx - dx * t * reach, cy + t * 0.22
+        links = 4
+        for i in range(1, links + 1):
+            k = i / (links + 1)
+            pygame.draw.circle(surf, (120, 124, 134), (cx + (bx - cx) * k, cy + t * 0.2 + (by - cy - t * 0.2) * k),
+                               max(1, t // 16), 1)
+        pygame.draw.circle(surf, (28, 28, 34), (bx, by), t * 0.17)
+        pygame.draw.circle(surf, (90, 90, 100), (bx, by), t * 0.17, 1)
+        pygame.draw.circle(surf, (150, 150, 165), (bx - t * 0.06, by - t * 0.06), max(1, t // 14))
+
     def _draw_bot(
-        self, surf: pygame.Surface, bot_id: int, pos: Pos, facing: Dir, now: float, sprite: Path | None, animate: bool
+        self, surf: pygame.Surface, bot_id: int, pos: Pos, facing: Dir, now: float, sprite: Path | None, animate: bool,
+        mohawk: bool = False,
     ) -> None:
         t = self.tile
         cx, cy = self._bot_center(bot_id, pos, now)
@@ -377,8 +426,10 @@ class BoardRenderer:
         img = self.sprite(sprite, t - 2)
         if img is not None:
             surf.blit(img, img.get_rect(center=(cx, cy + bob)))
+            if mohawk:
+                draw_mohawk(surf, cx, cy + bob - t * 0.42, t)
             return
-        draw_robot(surf, (cx, cy + bob), t, color, facing)
+        draw_robot(surf, (cx, cy + bob), t, color, facing, mohawk)
 
     def _draw_effects(self, surf: pygame.Surface, now: float) -> None:
         alive = []
@@ -391,15 +442,32 @@ class BoardRenderer:
         self.effects = alive
 
 
-def draw_robot(surf: pygame.Surface, center: tuple[float, float], t: int, color: tuple[int, int, int], facing: Dir) -> None:
-    """Default bot art: a chunky little digger robot that looks where it acts."""
+def draw_mohawk(surf: pygame.Surface, cx: float, base_y: float, t: float) -> None:
+    """Red punk mohawk: a row of spikes standing on base_y, about t * 0.3 tall."""
+    spikes, width, height = 5, t * 0.5, t * 0.3
+    left = cx - width / 2
+    step = width / spikes
+    for i in range(spikes):
+        tip_h = height * (0.75 + 0.25 * math.sin(math.pi * (i + 0.5) / spikes))  # tallest in the middle
+        pts = [(left + i * step, base_y), (left + (i + 0.5) * step, base_y - tip_h), (left + (i + 1) * step, base_y)]
+        pygame.draw.polygon(surf, (225, 30, 48), pts)
+        pygame.draw.polygon(surf, (120, 10, 20), pts, 1)
+
+
+def draw_robot(
+    surf: pygame.Surface, center: tuple[float, float], t: int, color: tuple[int, int, int], facing: Dir,
+    mohawk: bool = False,
+) -> None:
+    """Default bot art: a chunky little digger robot that looks where it acts (punks wear a mohawk)."""
     cx, cy = center
     body = pygame.Rect(0, 0, int(t * 0.72), int(t * 0.62))
     body.center = (int(cx), int(cy + t * 0.04))
     dark = _lerp(color, (0, 0, 0), 0.45)
-    # Antenna
-    pygame.draw.line(surf, dark, (body.centerx, body.top), (body.centerx, body.top - t * 0.16), 2)
-    pygame.draw.circle(surf, theme.DANGER, (body.centerx, body.top - t * 0.18), max(2, t // 12))
+    if mohawk:
+        draw_mohawk(surf, body.centerx, body.top + 1, t)
+    else:  # antenna
+        pygame.draw.line(surf, dark, (body.centerx, body.top), (body.centerx, body.top - t * 0.16), 2)
+        pygame.draw.circle(surf, theme.DANGER, (body.centerx, body.top - t * 0.18), max(2, t // 12))
     # Body + treads
     pygame.draw.rect(surf, color, body, border_radius=max(3, t // 6))
     pygame.draw.rect(surf, dark, body, width=2, border_radius=max(3, t // 6))

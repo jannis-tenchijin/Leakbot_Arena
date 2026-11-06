@@ -46,6 +46,7 @@ Five pipe squares are broken (leaking). Bots cannot see buried pipes.
 | `fix(d)`        | target is an unearthed **broken** pipe        | the pipe becomes fixed                                         |
 | `refill(d)`     | target is any hole, except a leaking pipe     | the square becomes untouched (walkable) again                  |
 | `buy(power_up)` | you have enough points, not bought yet        | pays the price; the power-up works for the rest of the round   |
+| `chain(d)`      | you are a punk, haven't chained yet, an opponent stands there | that opponent drags a ball and chain (see below) |
 
 **Auto-detect.** The square a bot stands on is detected for free: its spawn square at the start
 of the round and every square it steps onto. It scores like `detect`.
@@ -60,6 +61,15 @@ points, and each power-up can be bought once per round. Purchases are public.
 |-------------------------------|------:|--------|
 | `PowerUp.UT` (ultrasonic test) | 15 | every detect (and auto-detect) from now on also reports whether the scanned squares leak. Old results are not updated, but scanning a square again is. Seeing a leak this way pays nothing: unearth (+5) and fix (+15) it to score. |
 | `PowerUp.SATELLITE` (Tenchijin satellite) | 25 | shows the whole pipe network with a risk grade **A–E** per pipe square (E = most risky). No detect points for the squares it shows. Intact pipes are graded A–D (A most likely, D about 1 in 50); leaks are graded E–B (E most likely, B about 1 in 50) — a strong hint, not proof. |
+
+**Punk upgrade.** At move 200 a punk pickup appears on a random free square (public:
+`view.punk_pos`, `CellInfo.item == "punk"`; it blocks digging that square). The first bot to step
+onto it gets **+10 points** and a red mohawk (`PowerUp.PUNK`). In 1 vs 1 and battle royale the punk
+also gets **one ball and chain per round**: `Action.chain(d)` on an adjacent opponent. For the
+victim's next 100 moves every step takes two moves — the first `move(d)` only drags the ball
+(`view.dragging`), the second `move(d)` in the same direction steps; any other action resets the
+drag. `view.can_chain`, `view.chained_moves(bot_id)` are public. In single player the pickup just
+gives the 10 points and the mohawk.
 
 **What bots see.** Everywhere on the map, at any time: which squares are untouched, dug up or
 filled back in. A dug-up square shows its pipe, which way it runs, and whether it is OK, leaking
@@ -76,6 +86,7 @@ that detected them. Bots are **not** told who dug a hole — track your own digs
 | Fix a leak                                                    |    +15 |
 | End of round: each pipe hole you dug that is still open       |     −2 |
 | Buy a power-up                                                | −price |
+| Collect the punk pickup                                       |    +10 |
 
 Ranking: highest score, then fewer invalid moves, then whoever reached their score earliest.
 

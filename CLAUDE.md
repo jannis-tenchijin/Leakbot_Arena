@@ -66,7 +66,7 @@ leaking water pipes on a grid. Python 3.10+, pygame-ce for the viewer, pytest fo
 
 - Pipe networks: one component, reciprocal links, no interior dead ends, off-map links only
   on border cells (`tests/test_pipes.py`, 60 seeds x 4 sizes).
-- Score = 1·pipes_detected + 5·leaks_found + 15·leaks_fixed − 2·open_holes − spent
+- Score = 1·pipes_detected + 5·leaks_found + 15·leaks_fixed − 2·open_holes − spent + bonus
   (`tests/test_simulation.py`). Update both tests and README when point values change.
 - Bots move in strict rotation; a round ends after every bot made `max_moves` moves.
 
