@@ -245,7 +245,30 @@ class TenchijinBot(BaseBot):
                 return action
         if not view.has(SATELLITE):
             return self._explore(view)
-        return Action.detect()  # nothing worth doing now: detect is always valid (no points now)
+        return self._standby(view)
+
+    def _standby(self, view: BotView) -> Action:
+        """Nothing worth digging (every leak is accounted for): wait where the next one is likely.
+
+        New leaks only appear on B-or-riskier squares nobody has dug, so the bot parks on the
+        walkable square nearest their middle and waits there with detects (always valid, no
+        points after the satellite). When the next image shows a new leak, it is close by.
+        """
+        undug = [
+            p for p, r in view.satellite.items()
+            if r.risk in DIG_GRADES and not view.cell(p).revealed
+        ]
+        if undug:
+            cx = sum(p[0] for p in undug) / len(undug)
+            cy = sum(p[1] for p in undug) / len(undug)
+        else:
+            cx, cy = (view.width - 1) / 2, (view.height - 1) / 2
+        parent: dict[Pos, Pos | None] = {}
+        reach = dict(bfs(view, view.me, parent, view.dragging))
+        spot = min(reach, key=lambda q: (abs(q[0] - cx) + abs(q[1] - cy), reach[q], q))
+        if spot == view.me or abs(spot[0] - cx) + abs(spot[1] - cy) >= abs(view.me[0] - cx) + abs(view.me[1] - cy) - 1:
+            return Action.detect()  # parked (or no clearly better spot): wait here
+        return Action.move(direction(view.me, path_to(parent, spot)[0]))
 
     # --- Memory ---------------------------------------------------------------------------------
     def _remember(self, view: BotView) -> None:
@@ -639,13 +662,26 @@ class TenchijinBot(BaseBot):
             p: r.risk for p, r in sat.items()
             if r.risk in DIG_GRADES and p not in blocked and not view.cell(p).revealed
         }
-        pool = [p for p, grade in fresh.items() if grade != RISK_GRADES[-1]]  # E squares already leak
-        unseen = view.leaks_total - self.image_leaks
-        extra = unseen / len(pool) if pool and unseen > 0 else 0.0
-        return {
-            p: min(1.0, prior[grade] + (extra if grade != RISK_GRADES[-1] else 0.0))
-            for p, grade in fresh.items()
-        }
+        top = RISK_GRADES[-1]
+        pool = [p for p, grade in fresh.items() if grade != top]  # E squares already leak
+        # Leaks still hiding = all leaks so far - leaks already dug up (public) - undug E squares.
+        # Without this the bot kept digging B/C/D squares after every leak was found, because
+        # their grade alone still gave them a small chance (the "inspection loop").
+        known = sum(
+            1 for y in range(view.height) for x in range(view.width)
+            if view.cell((x, y)).revealed and view.cell((x, y)).pipe_state in (PipeState.BROKEN, PipeState.FIXED)
+        ) + sum(1 for grade in fresh.values() if grade == top)
+        hiding = max(0, view.leaks_total - known)
+        chances = {p: 1.0 for p, grade in fresh.items() if grade == top}
+        if hiding and pool:
+            # Grade-based odds, plus an even share for leaks that appeared after the image was
+            # taken (they are placed uniformly), scaled so they add up to the leaks still hiding.
+            unseen = max(0, view.leaks_total - self.image_leaks)
+            weight = {p: prior[fresh[p]] + unseen / len(pool) for p in pool}
+            total = sum(weight.values())
+            if total > 0:
+                chances.update({p: min(1.0, w * hiding / total) for p, w in weight.items()})
+        return chances
 
     def _plan(self, view: BotView) -> None:
         """Pick the job with the most expected points per move (travel + work).
