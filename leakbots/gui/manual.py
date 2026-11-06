@@ -3,8 +3,8 @@
 One key press that issues an action = one move = one ``Game.step()``. The App asks
 ``ManualControls`` which action a key means, queues it on the ``HumanBot`` and steps once.
 Keys are read as key codes (``event.key``), never as text input, so a Japanese IME cannot
-swallow them; held E/R/F are tracked with KEYDOWN/KEYUP (more reliable in browsers than
-``pygame.key.get_pressed``).
+swallow them; held modifiers (E/R/F, valves V/C/O) are tracked with KEYDOWN/KEYUP (more reliable
+in browsers than ``pygame.key.get_pressed``).
 """
 
 from __future__ import annotations
@@ -22,6 +22,9 @@ MODIFIER_KEYS: dict[int, Callable[[Dir], Action]] = {
     pygame.K_e: Action.unearth,
     pygame.K_r: Action.fix,
     pygame.K_f: Action.refill,
+    pygame.K_v: Action.install_valve,  # V = valve
+    pygame.K_c: Action.close_valve,  # C = close
+    pygame.K_o: Action.open_valve,  # O = open
 }
 BUY_KEYS = {
     pygame.K_1: PowerUp.UT,
@@ -39,6 +42,9 @@ HELP_ROWS: tuple[tuple[str, str, int | None], ...] = (
     ("keys_unearth", "help_unearth", pygame.K_e),
     ("keys_fix", "help_fix", pygame.K_r),
     ("keys_refill", "help_refill", pygame.K_f),
+    ("keys_valve", "help_valve", pygame.K_v),
+    ("keys_close", "help_close", pygame.K_c),
+    ("keys_open", "help_open", pygame.K_o),
     ("keys_buy_ut", "help_buy_ut", None),
     ("keys_buy_sat", "help_buy_sat", None),
 )
@@ -61,7 +67,7 @@ class HumanBot(BaseBot):
 
 
 class ManualControls:
-    """Maps key presses to actions and remembers which modifier (E/R/F) is held."""
+    """Maps key presses to actions and remembers which modifier (E/R/F/V/C/O) is held."""
 
     def __init__(self) -> None:
         self.held: list[int] = []  # modifier keys currently held down, most recent last

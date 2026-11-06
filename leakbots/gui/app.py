@@ -26,7 +26,7 @@ from ..simulation import SimulationResult, SimulationRunner, seat_labels
 from . import theme
 from .i18n import LANGS, rulebook, tr
 from .manual import GAME_KEYS, HELP_ROWS, HumanBot, ManualControls
-from .render import BoardRenderer, draw_robot
+from .render import BoardRenderer, draw_robot, draw_valve
 from .setup import MODES, GameSetup
 from .widgets import Button, Slider, Switch, draw_progress, wrap_text
 
@@ -38,6 +38,8 @@ FRAME_STEP_BUDGET = 0.012  # seconds per frame the engine may use in MAX mode
 SIM_FRAME_BUDGET = 0.02  # seconds per frame spent on simulated rounds
 MANUAL_MOVE_TIME = 0.12  # seconds the human's bot glides to the next square
 HELP_KEY_W = 84  # key-cap column of the manual-mode help box
+HELP_ROW_H = 17  # line height of the help box rows
+CARD_MAX_H = 98  # scoreboard cards grow up to this (room for the valves line + an error line)
 
 
 class App:
@@ -87,6 +89,7 @@ class App:
         self.selected_bot = 0
         self.card_rects: list[pygame.Rect] = []
         self._toast = ("", 0.0, theme.GOOD)
+        self._toast_queue: list[tuple[str, tuple[int, int, int]]] = []  # announcements waiting their turn
 
         # Simulation (a few rounds per frame, see SIM_FRAME_BUDGET)
         self.sim: SimulationRunner | None = None
@@ -124,8 +127,10 @@ class App:
     # --- Game control -----------------------------------------------------------------------
     def new_game(self, seed: int | None = None) -> None:
         self._punk_announced = False
+        self._toast_queue.clear()
         self.seed = seed if seed is not None else random.randrange(1_000_000)
         self.game = Game(self.bot_classes, self.config, self.seed)
+        self._leaks_seen = (self.game, len(self.game.leak_positions))  # for the new-leak toast
         self.renderer.set_game(self.game)
         self.playing = False
         self._acc = 0.0
@@ -222,7 +227,15 @@ class App:
 
         if self.game.punk_pos is not None and not self._punk_announced:
             self._punk_announced = True
-            self.toast(self.t("toast_punk"), theme.DANGER)
+            self.announce(self.t("toast_punk"), theme.DANGER)
+        # New leaks (moves 200/300/400): compare with the count last seen for this very Game object
+        seen_game, seen = self._leaks_seen  # (a Game swapped in from outside just starts a new count)
+        total = len(self.game.leak_positions)
+        if seen_game is self.game and total > seen:
+            self.announce(self.t("toast_new_leak"), theme.WATER)
+        self._leaks_seen = (self.game, total)
+        if self._toast_queue and time.perf_counter() >= self._toast[1]:
+            self.toast(*self._toast_queue.pop(0))
 
         # Simulated rounds share the frame with live play; slow frames (throttled tab) get more time
         if self.simulating:
@@ -271,6 +284,13 @@ class App:
 
     def toast(self, message: str, color: tuple[int, int, int] = theme.GOOD) -> None:
         self._toast = (message, time.perf_counter() + 3.0, color)
+
+    def announce(self, message: str, color: tuple[int, int, int]) -> None:
+        """A game event toast: queued behind one still showing (the punk and a leak share move 200)."""
+        if time.perf_counter() < self._toast[1]:
+            self._toast_queue.append((message, color))
+        else:
+            self.toast(message, color)
 
     def _card_at(self, pos: tuple[int, int]) -> int | None:
         for i, rect in enumerate(self.card_rects):
@@ -376,8 +396,8 @@ class App:
                 self.running = False
             return
         if self.manual and key in GAME_KEYS:
-            # W A S D Q E R F 1 2 belong to the game here, so S/R/D never step, restart or toggle marks
-            action = self.controls.key_down(key)  # E/R/F are tracked even under the rulebook
+            # W A S D Q E R F V C O 1 2 belong to the game here, so S/R/D never step, restart or toggle marks
+            action = self.controls.key_down(key)  # modifiers are tracked even under the rulebook
             if action is not None:
                 self.play_manual(action)  # ignored while the rulebook is open
             return
@@ -516,10 +536,10 @@ class App:
         # Scoreboard + simulation panel (key help in manual mode) share the remaining height
         top = 340
         hint_top = self.screen.get_height() - 58
-        sim_h = 182 if self.manual else 150 if len(self.bot_classes) <= 2 else 190
+        sim_h = self.help_box_height() if self.manual else 166 if len(self.bot_classes) <= 2 else 190
         self._text(self.t("scoreboard"), (x, top), 12, theme.MUTED, bold=True)
         card_area = hint_top - sim_h - (top + 20)
-        card_h = max(24, min(84, card_area // len(self.bot_classes) - 6))
+        card_h = max(24, min(CARD_MAX_H, card_area // len(self.bot_classes) - 6))
         self.card_rects = []
         y = top + 20
         for bot_id in range(len(self.bot_classes)):
@@ -578,8 +598,22 @@ class App:
             pen = holes * g.config.penalty_open_pipe_hole
             key = "card_holes_final" if g.over else "card_holes_live"
             self._text(self.t(key, h=holes, pen=pen, i=st.invalid), (tx, rect.y + 44), 12, theme.MUTED)
-            if st.last_error:
-                self._text(self.t("error", e=st.last_error)[:40], (tx, rect.y + 60), 11, theme.DANGER)
+        # Valves line (needs 80 px) and the error line (needs 96 px; else it takes the valves line's place)
+        y = rect.y + 61
+        if rect.h >= 80 and not (st.last_error and rect.h < 96):
+            closed = st.closed_valves if g.over else self._closed_valves(bot_id)
+            pen = closed * g.config.penalty_closed_valve
+            key = "card_valves_final" if g.over else "card_valves_live"
+            draw_valve(self.screen, (tx + 6, y + 7), 22, closed == 0)  # icon: red while one is still shut
+            self._text(self.t(key, r=st.valves_reopened, c=closed, pen=pen), (tx + 16, y), 12, theme.MUTED)
+            y += 16
+        if rect.h >= 66 and st.last_error:
+            self._text(self.t("error", e=st.last_error)[:40], (tx, y), 11, theme.DANGER)
+
+    def _closed_valves(self, bot_id: int) -> int:
+        """Valves this bot closed that are still closed (buried ones too): -10 each at the end."""
+        return sum(c.valve and not c.valve_open and c.valve_closer == bot_id
+                   for row in self.game.cells for c in row)
 
     def _draw_badges(self, upgrades, x: int, y: int, chained: int = 0) -> None:
         """Small pills next to a bot's name: power-ups, punk, and a ball-and-chain countdown."""
@@ -597,6 +631,11 @@ class App:
             self.screen.blit(img, img.get_rect(center=pill.center))
             x = pill.right + 3
 
+    @staticmethod
+    def help_box_height() -> int:
+        """Height reserved for the manual-mode key help box (title, one line per row, two notes)."""
+        return 8 + 22 + HELP_ROW_H * len(HELP_ROWS) + 4 + 2 * 15 + 8 + 8
+
     def _draw_manual_help(self, rect: pygame.Rect) -> None:
         """Key help box (replaces the simulation panel in manual mode); the held modifier row lights up."""
         pygame.draw.rect(self.screen, theme.PANEL, rect, border_radius=6)
@@ -611,9 +650,10 @@ class App:
             self._text(self.t(keys_key), (x, y), 12, theme.ACCENT, bold=True)
             # Only the buy rows have a {c} placeholder; format() ignores it for the others
             self._text(self.t(text_key, c=costs.get(text_key)), (x + HELP_KEY_W, y), 12, theme.TEXT)
-            y += 17
+            y += HELP_ROW_H
         self._text(self.t("help_note"), (x, y + 4), 11, theme.MUTED)
-        self.help_bottom = y + 4 + theme.font(11).get_linesize()  # checked by the layout test
+        self._text(self.t("help_note_buy"), (x, y + 19), 11, theme.MUTED)
+        self.help_bottom = y + 19 + theme.font(11).get_linesize()  # checked by the layout test
 
     def _draw_sim_panel(self, rect: pygame.Rect) -> None:
         pygame.draw.rect(self.screen, theme.PANEL, rect, border_radius=6)
@@ -623,18 +663,24 @@ class App:
         if self.simulating:
             done, total = self.sim.played, self.sim.n_rounds
             draw_progress(self.screen, pygame.Rect(x, y + 24, rect.w - 20, 16), done / max(1, total))
-            self._text(self.t("sim_progress", d=done, t=total, s=self.sim.seed), (x, y + 46), 12, theme.TEXT)
+            first = self.sim.seed if self.sim.seed is not None else 0
+            self._text(self.t("sim_progress", d=done, t=total, s=first, e=first + total - 1), (x, y + 46), 12,
+                       theme.TEXT)
             return
         res = self.sim_result
         if res is None:
             for i, line in enumerate(self.t("sim_idle", n=self.sim_rounds).split("\n")):
                 self._text(line, (x, y + 24 + 16 * i), 12, theme.MUTED)
             return
-        head = self.t("sim_head", g=res.rounds, sec=f"{res.seconds:.1f}", s=res.first_seed)
+        head = self.t("sim_head", g=res.rounds, sec=f"{res.seconds:.1f}")
         if res.cancelled:
             head += "  " + self.t("sim_cancelled")
         self._text(head, (title.right + 12, y + 1), 11, theme.MUTED)
-        y += 22
+        y += 20
+        if res.first_seed is not None and res.rounds:  # one seed per round: a new map every round
+            last = res.first_seed + res.rounds - 1
+            self._text(self.t("sim_seeds", s=res.first_seed, e=last), (x, y), 11, theme.MUTED)
+            y += 18
         multi = len(res.seats) > 1
         compact = len(res.seats) > 2
         for bot_id, seat in enumerate(res.seats):
@@ -749,8 +795,8 @@ class App:
                         pygame.draw.circle(self.screen, theme.MUTED, (x + 4, y + line_h // 2), 2)
                     for i, line in enumerate(lines):
                         self.screen.blit(body.render(line, True, theme.TEXT), (x + indent, y + i * line_h))
-                y += line_h * len(lines) + 5
-            y += 12
+                y += line_h * len(lines) + 3
+            y += 9
         return y
 
     # --- Setup overlay ----------------------------------------------------------------------

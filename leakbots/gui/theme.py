@@ -36,6 +36,13 @@ PIPE_LINE = (20, 30, 42)
 FITTING = (110, 136, 158)
 WATER = (70, 170, 255)
 CLAMP = (72, 204, 96)
+VALVE_OPEN = (64, 214, 96)  # handwheel of an open valve
+VALVE_CLOSED = (236, 56, 64)  # closed valve (and the buried-closed-valve sign)
+
+# Waterworks (水道局) building
+WATERWORKS_WALL = (238, 232, 214)
+WATERWORKS_ROOF = (42, 120, 228)
+WATERWORKS_ROOF_DARK = (18, 54, 120)
 
 # Satellite risk grades: green (low) to red (high)
 RISK_COLORS = {

@@ -33,7 +33,19 @@ Bots can never leave the grid.
 
 **Pipes.** A random, continuous pipe network is buried under the grid at the start of every
 round. Pipes never dead-end inside the map; they only end where they lead off the map edge.
-Five pipe squares are broken (leaking). Bots cannot see buried pipes.
+Five pipe squares are broken (leaking) at the start, and **one new leak appears at moves 200, 300
+and 400** on a buried, untouched pipe (`view.leaks_total` counts them). Bots cannot see buried pipes.
+
+**Waterworks (水道局).** A building (blue roof, water drop) on a random pipe square away from the
+leaks (`view.waterworks_pos`, `CellInfo.building`). Bots can walk on it but never dig it up.
+Power-ups can **only be bought while standing on it**.
+
+**Valves.** A leak can only be fixed once the water is turned off: every in-grid square its pipe
+connects to (`view.connected_neighbors(leak)`) must be unearthed, get a valve and have that valve
+closed. Valves start open. Reopening a valve after the leak it isolated was fixed pays +5 (once per
+valve, to whoever reopens it). Valves still closed at the end of the round cost whoever closed them
+−10 each — also when a refill buried them. Valves on dug-up squares are public (`CellInfo.valve`:
+`None` = no valve, `True` = open, `False` = closed).
 
 **Actions.** One action per move. Directional actions aim at the neighbouring square
 (`UP`, `DOWN`, `LEFT`, `RIGHT`), never at the bot's own square.
@@ -43,9 +55,12 @@ Five pipe squares are broken (leaking). Bots cannot see buried pipes.
 | `move(d)`       | target is inside, untouched and free          | the bot steps there (and the new square is auto-detected)      |
 | `detect()`      | always                                        | scans the four neighbouring squares inside the grid at once (private result) |
 | `unearth(d)`    | target is untouched and free                  | the square becomes a hole; holes cannot be walked on           |
-| `fix(d)`        | target is an unearthed **broken** pipe        | the pipe becomes fixed                                         |
-| `refill(d)`     | target is any hole, except a leaking pipe     | the square becomes untouched (walkable) again                  |
-| `buy(power_up)` | you have enough points, not bought yet        | pays the price; the power-up works for the rest of the round   |
+| `fix(d)`        | target is an unearthed **broken** pipe and every square it connects to has a **closed valve** | the pipe becomes fixed (+40) |
+| `install_valve(d)` | target is an unearthed pipe square without a valve | puts an (open) valve there                              |
+| `close_valve(d)` | target is an unearthed square with an open valve | turns the water off there (you are charged −10 if it is still closed at the end) |
+| `open_valve(d)` | target is an unearthed square with a closed valve | turns the water on again (+5 once if the leak it isolated was fixed) |
+| `refill(d)`     | target is any hole, except a leaking pipe     | the square becomes untouched (walkable) again; a valve stays buried in it |
+| `buy(power_up)` | you **stand on the waterworks**, have enough points, not bought yet | pays the price; the power-up works for the rest of the round |
 | `chain(d)`      | you are a punk, haven't chained yet, an opponent stands there | that opponent drags a ball and chain (see below) |
 
 **Auto-detect.** The square a bot stands on is detected for free: its spawn square at the start
@@ -54,13 +69,14 @@ of the round and every square it steps onto. It scores like `detect`.
 An invalid action (blocked, outside the grid, bad target, not enough points, or the bot
 crashed) wastes the move and counts as an *invalid move*.
 
-**Power-ups.** Bought with points via `Action.buy(...)`; buying uses the move, needs enough
-points, and each power-up can be bought once per round. Purchases are public.
+**Power-ups.** Bought with points via `Action.buy(...)` while standing on the waterworks; buying
+uses the move, needs enough points, and each power-up can be bought once per round. Purchases are
+public.
 
 | Power-up                      | Price | Effect |
 |-------------------------------|------:|--------|
-| `PowerUp.UT` (ultrasonic test) | 15 | every detect (and auto-detect) from now on also reports whether the scanned squares leak. Old results are not updated, but scanning a square again is. Seeing a leak this way pays nothing: unearth (+5) and fix (+15) it to score. |
-| `PowerUp.SATELLITE` (Tenchijin satellite) | 25 | shows the whole pipe network with a risk grade **A–E** per pipe square (E = most risky). No detect points for the squares it shows. Intact pipes are graded A–D (A most likely, D about 1 in 50); leaks are graded E–B (E most likely, B about 1 in 50) — a strong hint, not proof. |
+| `PowerUp.UT` (ultrasonic test) | 15 | every detect (and auto-detect) from now on also reports whether the scanned squares leak. Old results are not updated, but scanning a square again is. Seeing a leak this way pays nothing: unearth (+5) and fix (+40) it to score. |
+| `PowerUp.SATELLITE` (Tenchijin satellite) | 25 | shows the whole pipe network with a risk grade **A–E** per pipe square (E = most risky). No detect points for the squares it shows. Intact pipes are graded A–D (A most likely, D about 1 in 50); leaks are graded E–B (E most likely, B about 1 in 50) — a strong hint, not proof. The image is retaken every 50 of your moves (`view.satellite_age`): leaks that appear later only show up on the next refresh. |
 
 **Punk upgrade.** At move 200 a punk pickup appears on a random free square (public:
 `view.punk_pos`, `CellInfo.item == "punk"`; it blocks digging that square). The first bot to step
@@ -83,8 +99,10 @@ that detected them. Bots are **not** told who dug a hole — track your own digs
 |---------------------------------------------------------------|-------:|
 | Discover a pipe square for the first time by detect or auto-detect (once per square per bot, never for a square that was ever dug up or shown by your satellite) | +1 |
 | Find a leak (unearth a broken pipe, once per leak)            |     +5 |
-| Fix a leak                                                    |    +15 |
+| Fix a leak (all its connected squares valved off first)       |    +40 |
+| Reopen a valve after the leak it isolated was fixed (once per valve, anyone) |     +5 |
 | End of round: each pipe hole you dug that is still open       |     −2 |
+| End of round: each valve you closed that is still closed (buried ones too) |    −10 |
 | Buy a power-up                                                | −price |
 | Collect the punk pickup                                       |    +10 |
 
@@ -125,7 +143,10 @@ action is exactly one move; the round has the usual 500 moves.
 | hold `E` + `W A S D`  | unearth (dig up) that side                                       |
 | hold `R` + `W A S D`  | fix the leak on that side                                        |
 | hold `F` + `W A S D`  | refill the hole on that side                                     |
-| `1` / `2`             | buy UT / buy the satellite                                       |
+| hold `V` + `W A S D`  | install a valve on that side                                     |
+| hold `C` + `W A S D`  | close the valve on that side                                     |
+| hold `O` + `W A S D`  | open the valve on that side                                      |
+| `1` / `2`             | buy UT / buy the satellite (only while standing on the waterworks) |
 
 A key help box replaces the simulation panel. PLAY, STEP, the speed slider and RUN 100 ROUNDS
 are off (your key presses are the clock), and so are the hotkeys that clash with the game keys
@@ -168,6 +189,10 @@ Key parts of the `view` (full list in [leakbots/bot_api.py](leakbots/bot_api.py)
 | `view.detected`                 | your private detect memory `{pos: had_pipe}`                   |
 | `view.detected_leaks`           | with UT: `{pos: leaking}` for squares scanned after buying     |
 | `view.satellite`, `view.risk(pos)` | with the satellite: `{pos: SatelliteReading(pipe_dirs, risk)}` / grade `"A"`–`"E"` |
+| `view.satellite_age`            | moves since your satellite image was taken (refreshed every 50) |
+| `view.waterworks_pos`           | the waterworks square: stand here to buy                       |
+| `view.connected_neighbors(pos)` | squares a revealed pipe connects to: valve these off before fixing `pos` |
+| `view.leaks_total`              | leaks on the map so far (grows at moves 200, 300, 400)          |
 | `view.upgrades`, `view.has(p)`, `view.cost(p)` | your power-ups, ownership check, price      |
 | `view.last_result`              | outcome of your previous move (`success`, `message`, `points`, `scan`, `scan_leaks`) |
 | `view.score`, `view.scores`     | your score / everyone's score                                  |

@@ -47,8 +47,8 @@ leaking water pipes on a grid. Python 3.10+, pygame-ce for the viewer, pytest fo
   README rules table, and tests for each valid/invalid case.
 - Randomness: the engine uses `Game.rng` seeded from `seed`; bots get `self.rng`. Same seed
   must replay the same game (`test_same_seed_same_game`).
-- Manual mode (`gui/manual.py`, `tests/test_manual.py`): `W A S D Q E R F 1 2` are game keys
-  there, so new global hotkeys must avoid them; a new action also needs a key + help-box row.
+- Manual mode (`gui/manual.py`, `tests/test_manual.py`): `W A S D Q E R F V C O 1 2` are game
+  keys there, so new global hotkeys must avoid them; a new action also needs a key + help-box row.
 
 ## UI text and languages (English / Japanese)
 
@@ -66,8 +66,9 @@ leaking water pipes on a grid. Python 3.10+, pygame-ce for the viewer, pytest fo
 
 - Pipe networks: one component, reciprocal links, no interior dead ends, off-map links only
   on border cells (`tests/test_pipes.py`, 60 seeds x 4 sizes).
-- Score = 1·pipes_detected + 5·leaks_found + 15·leaks_fixed − 2·open_holes − spent + bonus
-  (`tests/test_simulation.py`). Update both tests and README when point values change.
+- Score = 1·pipes_detected + 5·leaks_found + 40·leaks_fixed − 2·open_holes − spent + bonus
+  + 5·valves_reopened − 10·closed_valves (`tests/test_simulation.py`). Update both tests and
+  README when point values change.
 - Bots move in strict rotation; a round ends after every bot made `max_moves` moves.
 
 ## Conventions

@@ -54,10 +54,12 @@ _TEXT: dict[str, tuple[str, str]] = {
     "start_round": ("START ROUND", "ラウンド開始"),
     "setup_manual": ("You play one bot yourself with the keyboard.\n"
                      "W A S D move  ·  Q detect  ·  hold E / R / F + W A S D: dig up / fix / refill\n"
-                     "1 buy UT  ·  2 buy satellite",
+                     "hold V / C / O + W A S D: install / close / open a valve\n"
+                     "1 buy UT  ·  2 buy satellite  (standing on the waterworks)",
                      "キーボードで自分のボットを1体操作します。\n"
                      "W A S D 移動  ・  Q 探知  ・  E / R / F を押したまま W A S D: 掘削 / 修理 / 埋め戻し\n"
-                     "1 UT購入  ・  2 衛星購入"),
+                     "V / C / O を押したまま W A S D: バルブの設置 / 閉める / 開ける\n"
+                     "1 UT購入  ・  2 衛星購入  (水道局の上で)"),
     "setup_hint": ("Click < > to pick a bot  ·  Enter starts  ·  Esc closes",
                    "< > でボットを選択  ・  Enterで開始  ・  Escで閉じる"),
     "toast_bots_failed": ("Could not load {files}", "{files} を読み込めませんでした"),
@@ -70,19 +72,23 @@ _TEXT: dict[str, tuple[str, str]] = {
     "card_counts": ("pipes {p}  found {f}  fixed {x}", "配管 {p}  発見 {f}  修理 {x}"),
     "card_holes_live": ("holes {h} (-{pen} at end)  invalid {i}", "穴 {h} (終了時 -{pen})  無効 {i}"),
     "card_holes_final": ("holes {h} (-{pen})  invalid {i}", "穴 {h} (-{pen})  無効 {i}"),
+    "card_valves_live": ("reopened {r}  closed {c} (-{pen} at end)", "再開 {r}  閉じたまま {c} (終了時 -{pen})"),
+    "card_valves_final": ("reopened {r}  closed {c} (-{pen})", "再開 {r}  閉じたまま {c} (-{pen})"),
     "error": ("error: {e}", "エラー: {e}"),
     "badge_ut": ("UT", "UT"),
     "badge_sat": ("SAT", "衛星"),
     "badge_punk": ("PUNK", "パンク"),
     "badge_chained": ("CHAINED {n}", "鉄球 {n}"),
     "toast_punk": ("A PUNK upgrade appeared on the map!", "パンクアイテムが出現!"),
+    "toast_new_leak": ("A new leak sprang somewhere!", "どこかで新しい漏水が発生!"),
     "risk_legend": ("SATELLITE RISK  A low ... E high", "衛星リスク  A 低 … E 高"),
     # Simulation panel
     "sim_title": ("SIMULATION", "シミュレーション"),
     "sim_idle": ("Plays {n} headless rounds with\nthe current bots on fresh maps.",
                  "今のボットで新しいマップを\n{n}ラウンド、画面なしで対戦します。"),
-    "sim_progress": ("{d}/{t} rounds  (seeds {s}+)", "{d}/{t} ラウンド  (シード {s}〜)"),
-    "sim_head": ("{g} rounds  {sec}s  seed {s}", "{g}ラウンド  {sec}秒  シード {s}"),
+    "sim_progress": ("{d}/{t} rounds  (seeds {s}–{e})", "{d}/{t} ラウンド  (シード {s}〜{e})"),
+    "sim_head": ("{g} rounds  {sec}s", "{g}ラウンド  {sec}秒"),
+    "sim_seeds": ("seeds {s}–{e}: a new map every round", "シード {s}〜{e}:毎ラウンド別のマップ"),
     "sim_cancelled": ("(cancelled)", "(中止)"),
     "sim_avg": ("avg {a}", "平均 {a}"),
     "sim_wins": ("wins {w}%", "勝率 {w}%"),
@@ -98,14 +104,21 @@ _TEXT: dict[str, tuple[str, str]] = {
     "keys_unearth": ("E + WASD", "E + WASD"),
     "help_unearth": ("unearth that side", "その方向を掘削"),
     "keys_fix": ("R + WASD", "R + WASD"),
-    "help_fix": ("fix that side", "その方向を修理"),
+    "help_fix": ("fix that side (valves shut)", "その方向を修理 (バルブ閉)"),
     "keys_refill": ("F + WASD", "F + WASD"),
     "help_refill": ("refill that side", "その方向を埋め戻し"),
+    "keys_valve": ("V + WASD", "V + WASD"),
+    "help_valve": ("install a valve there", "その方向にバルブを設置"),
+    "keys_close": ("C + WASD", "C + WASD"),
+    "help_close": ("close that valve", "その方向のバルブを閉める"),
+    "keys_open": ("O + WASD", "O + WASD"),
+    "help_open": ("open that valve", "その方向のバルブを開ける"),
     "keys_buy_ut": ("1", "1"),
     "help_buy_ut": ("buy UT ({c} points)", "UTを購入 ({c}点)"),
     "keys_buy_sat": ("2", "2"),
     "help_buy_sat": ("buy satellite ({c} points)", "衛星を購入 ({c}点)"),
-    "help_note": ("Hold E, R or F, then tap a direction.", "E・R・Fを押したまま方向キーを押す。"),
+    "help_note": ("Hold E R F V C O, then tap a direction.", "E・R・F・V・C・Oを押したまま方向キーを押す。"),
+    "help_note_buy": ("Buy (1 / 2) only on the waterworks.", "購入(1・2)は水道局の上でのみ。"),
     # Hints + toasts
     "hint_drop": ("Drag a PNG onto a bot card to set its sprite", "PNGをボットのカードにドロップで画像変更"),
     "hint_web_sprite": ("Sprites: commit bots/sprites/<ClassName>.png", "画像: bots/sprites/<クラス名>.png をコミット"),
@@ -146,10 +159,11 @@ _RULES: dict[str, dict[str, list[Section]]] = {
             ("GOAL", [
                 ("", "Find buried water leaks, fix them and leave no open pipe holes. A round is one "
                      "game: the highest score after {moves} moves wins."),
+                ("", "{leaks} leaks at the start; a new one appears at moves {extra}."),
             ]),
             ("MOVES", [
-                ("", "Bots take turns in a fixed order. Each move is exactly one action. Every bot makes "
-                     "{moves} moves per round; in single player your bot makes every move."),
+                ("", "Bots take turns in a fixed order; each move is one action. Every bot makes "
+                     "{moves} moves per round."),
                 ("", "The square a bot stands on is detected automatically and for free: at the start "
                      "and after every step."),
             ]),
@@ -157,30 +171,34 @@ _RULES: dict[str, dict[str, list[Section]]] = {
                 ("", "Actions aim at a neighbouring square UP, DOWN, LEFT or RIGHT, never at the "
                      "bot's own square. DETECT and BUY need no direction."),
                 ("MOVE", "Step onto an untouched, empty square. Holes and other bots block the way."),
-                ("DETECT", "Scan the four neighbouring squares (those inside the grid) at once and learn "
-                           "privately which hold a pipe."),
+                ("DETECT", "Privately learn which of the four neighbours hold a pipe."),
                 ("UNEARTH", "Dig the square open. It must be untouched and empty."),
-                ("FIX", "Repair a broken pipe in an unearthed square."),
-                ("REFILL", "Fill any hole back in, whoever dug it. A leaking pipe must be fixed first."),
-                ("BUY", "Buy a power-up with points. Uses the move and needs enough points; "
-                        "each power-up once per round."),
+                ("FIX", "Repair a broken pipe in an unearthed square. Valves first: every square "
+                        "its pipe connects to needs a closed valve."),
+                ("VALVE", "Install a valve (open) on an unearthed pipe square."),
+                ("CLOSE", "Turn that valve off."),
+                ("OPEN", "Turn that valve on again."),
+                ("REFILL", "Fill any hole back in, anyone's; fix a leak first."),
+                ("BUY", "Buy a power-up with points while standing on the waterworks (blue roof). "
+                        "Each power-up once per round."),
                 ("CHAIN", "Punk only, once per round: ball and chain on an adjacent opponent."),
             ]),
             ("LIMITS", [
                 ("", "Bots can never leave the {w} x {h} grid."),
                 ("", "One bot or object per square. Bots cannot stand on unearthed squares."),
+                ("", "The waterworks can be walked on but never dug up."),
                 ("", "An invalid action (blocked, off the grid, wrong target, not enough points, bot "
                      "crash) wastes the move and counts as an invalid move."),
             ]),
         ],
         "right": [
             ("POWER-UPS", [
-                ("UT", "{ut} points. Every detect and auto-detect from now on also shows whether the scanned squares "
-                       "leak (scan a square again to update an old result). No points for leaks seen "
-                       "this way: unearth and fix them to score."),
+                ("UT", "{ut} points. From now on every detect and auto-detect also shows whether the scanned "
+                       "squares leak (rescan to update). Leaks seen this way pay nothing: unearth and fix them."),
                 ("SAT", "{sat} points. The Tenchijin satellite shows you the whole pipe network with "
                               "a risk grade A to E per pipe square (E = most likely leaking). Squares it "
-                              "shows give no detect points."),
+                              "shows give no detect points. Retaken every {refresh} of your moves: "
+                              "new leaks show up then."),
                 ("", "Grades are a hint, not proof: most leaks are graded E or D, but an intact pipe "
                      "can be graded D, and a leak can be graded B."),
                 ("PUNK", "Free pickup at move {punk} on a random square: step on it for +{punk_pts} and a "
@@ -196,11 +214,13 @@ _RULES: dict[str, dict[str, list[Section]]] = {
                 ("", "Bots are not told who dug a hole: keep track of your own. Power-up purchases are public."),
             ]),
             ("SCORING", [
-                ("+{pd}", "Discover a pipe square for the first time (detect or auto-detect). Once per "
-                          "square per bot, and never for a square that was ever dug up."),
+                ("+{pd}", "First discovery of a pipe square (detect or auto-detect), once per square per "
+                          "bot; never for a square that was ever dug up."),
                 ("+{lf}", "Find a leak: unearth a broken pipe (once per leak)."),
                 ("+{lx}", "Fix a leak."),
+                ("+{vr}", "Reopen a valve after the leak it isolated was fixed (once; anyone may)."),
                 ("-{pen}", "At the end of the round, for every pipe hole you dug that is still open."),
+                ("-{cv}", "At the end, for every valve you closed that is still closed (buried too)."),
                 ("", "Power-ups cost their price in points. Ties: fewer invalid moves wins, then "
                      "whoever reached their score first."),
             ]),
@@ -211,10 +231,11 @@ _RULES: dict[str, dict[str, list[Section]]] = {
             ("目的", [
                 ("", "地中の配管の漏水を見つけて修理し、穴を開けたままにしないこと。1ラウンド = 1ゲーム。"
                      "{moves}手の後に最も得点の高いボットの勝ち。"),
+                ("", "開始時の漏水は{leaks}か所。{extra}手目に1か所ずつ増える。"),
             ]),
             ("手番", [
                 ("", "ボットは決まった順番で交代に行動する。1手 = 1つの行動。各ボットは1ラウンドで"
-                     "{moves}手ずつ行動する。シングルプレイでは毎手自分のボットが行動する。"),
+                     "{moves}手ずつ行動する。"),
                 ("", "ボットが立っているマスは自動で無料探知される(開始時と、移動するたび)。"),
             ]),
             ("行動", [
@@ -223,26 +244,29 @@ _RULES: dict[str, dict[str, list[Section]]] = {
                 ("移動", "未掘削で空いているマスへ進む。穴と他のボットは通れない。"),
                 ("探知", "上下左右の4マス(盤面内のみ)を同時にスキャンし、配管があるかを自分だけが知る。"),
                 ("掘削", "マスを掘り起こす。未掘削で空いているマスのみ。"),
-                ("修理", "掘り起こしたマスの壊れた配管を直す。"),
+                ("修理", "掘り起こした壊れた配管を直す。先につながる全マスのバルブを閉める。"),
+                ("バルブ", "掘り起こした配管マスにバルブを設置する(開いた状態)。"),
+                ("閉める", "そのバルブを閉める。"),
+                ("開ける", "そのバルブをまた開ける。"),
                 ("埋め戻し", "誰が掘った穴でも埋め戻せる。漏水中の配管は先に修理が必要。"),
-                ("購入", "得点でパワーアップを買う。1手を使い、得点が足りる場合のみ。"
-                         "各パワーアップは1ラウンドに1回。"),
+                ("購入", "水道局(青い屋根)の上で得点を使って買う。各1ラウンドに1回。"),
                 ("鉄球", "パンクのみ、1ラウンドに1回:隣の相手に鉄球付きの鎖をつける。"),
             ]),
             ("制限", [
                 ("", "ボットは {w} × {h} の盤面の外には出られない。"),
                 ("", "1マスにはボットか物体が1つだけ。掘り起こしたマスには立てない。"),
+                ("", "水道局のマスは通れるが、掘れない。"),
                 ("", "無効な行動(通れない、盤面外、対象が違う、得点不足、ボットのエラー)は"
                      "1手を消費し、無効手として数えられる。"),
             ]),
         ],
         "right": [
             ("パワーアップ", [
-                ("UT", "{ut}点。以後の探知と自動探知で、スキャンしたマスの漏水の有無も分かる(古い結果は"
-                       "もう一度探知すると更新)。この方法で見つけた漏水に得点はなし:"
-                       "掘り起こして修理すると得点。"),
+                ("UT", "{ut}点。以後の探知と自動探知で、スキャンしたマスの漏水の有無も分かる(再探知で"
+                       "更新)。この方法で見つけた漏水に得点はなし:掘り起こして修理すると得点。"),
                 ("衛星", "{sat}点。天地人衛星で配管網全体と、配管マスごとのリスク等級A〜E"
-                         "(Eが最も漏水の可能性が高い)が見える。衛星で見えたマスは探知の得点なし。"),
+                         "(Eが最も漏水の可能性が高い)が見える。衛星で見えたマスは探知の得点なし。"
+                         "自分の{refresh}手ごとに撮り直され、新しい漏水はその時に映る。"),
                 ("", "等級はヒントであり確実ではない:漏水の多くはEかDだが、正常な配管がDのことも、"
                      "漏水がBのこともある。"),
                 ("パンク", "{punk}手目にランダムなマスに現れる無料アイテム。踏むと+{punk_pts}点と赤いモヒカン。"
@@ -258,11 +282,13 @@ _RULES: dict[str, dict[str, list[Section]]] = {
                      "パワーアップの購入は全員に公開される。"),
             ]),
             ("得点", [
-                ("+{pd}", "配管マスを初めて発見(探知または自動探知)。各ボット1マス1回だけで、"
+                ("+{pd}", "配管マスを初めて発見(探知・自動探知)。各ボット1マス1回、"
                           "一度でも掘り起こされたマスは対象外。"),
                 ("+{lf}", "漏水を発見:壊れた配管を掘り起こす(漏水ごとに1回)。"),
                 ("+{lx}", "漏水を修理する。"),
+                ("+{vr}", "修理済みの漏水を止めていたバルブを開け直す(1回、誰でも)。"),
                 ("-{pen}", "ラウンド終了時、自分が掘って開いたままの配管の穴1つにつき。"),
+                ("-{cv}", "ラウンド終了時、自分が閉めて閉じたままのバルブ1つにつき(埋めたものも)。"),
                 ("", "パワーアップは価格分の得点を消費する。同点の場合:無効手が少ない方、"
                      "次に先にその得点に達した方が上位。"),
             ]),
@@ -273,8 +299,18 @@ _RULES: dict[str, dict[str, list[Section]]] = {
 
 def rulebook(lang: str, cfg: GameConfig) -> tuple[list[Section], list[Section]]:
     """(left column, right column) sections with the current rule values filled in."""
+    extra = [str(m) for m in cfg.extra_leak_moves] or ["-"]
+    if lang == "ja":
+        extra_text = "・".join(extra)
+    else:  # "200, 300 and 400"
+        extra_text = extra[0] if len(extra) == 1 else ", ".join(extra[:-1]) + " and " + extra[-1]
     values = {
         "moves": cfg.max_moves,
+        "leaks": cfg.n_leaks,
+        "extra": extra_text,
+        "refresh": cfg.satellite_refresh,
+        "vr": cfg.points_valve_reopened,
+        "cv": cfg.penalty_closed_valve,
         "w": cfg.width,
         "h": cfg.height,
         "pd": cfg.points_pipe_detected,
