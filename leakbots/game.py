@@ -26,7 +26,7 @@ from .model import (
     Surface,
     dirs_from_mask,
 )
-from .pipes import generate_pipe_masks, pick_leaks, pick_risk_grades
+from .pipes import generate_pipe_masks, leak_grade, pick_leaks, pick_risk_grades
 
 
 # ActionResult.message of two special successful moves (the GUI animates them)
@@ -46,6 +46,9 @@ class BotState:
     open_holes: int = 0  # pipe holes charged at the end of the round
     spent: int = 0  # points spent on power-ups
     bonus: int = 0  # points from pickups (punk upgrade)
+    valves_reopened: int = 0  # valves reopened after their leak was fixed (+5 each)
+    closed_valves: int = 0  # valves this bot closed that were still closed at the end (-10 each)
+    satellite_since: int = -1  # own move number of the last satellite image (purchase or refresh)
     chain_used: bool = False  # punk: the one ball and chain of the round has been placed
     chained_left: int = 0  # moves this bot still drags a ball and chain (0 = free)
     dragging: Dir | None = None  # chained: direction of the step it has started dragging toward
@@ -93,6 +96,7 @@ class Game:
         masks: list[list[int]] | None = None,
         leaks: Sequence[Pos] | None = None,
         spawns: Sequence[Pos] | None = None,
+        waterworks: Pos | None | str = "auto",
     ) -> None:
         if not bot_classes:
             raise ValueError("A game needs at least one bot")
@@ -101,6 +105,7 @@ class Game:
         self.rng = random.Random(self.seed)
 
         # Map: pipe network + leaks
+        explicit_map = masks is not None
         if masks is None:
             masks = generate_pipe_masks(config.width, config.height, self.rng, config.pipe_coverage)
         if len(masks) != config.height or any(len(row) != config.width for row in masks):
@@ -119,6 +124,15 @@ class Game:
         risk_rng = random.Random(f"risk-{self.seed}")
         for (x, y), grade in pick_risk_grades(masks, leaks, risk_rng, config.risk_decay).items():
             self._cells[y][x].risk = grade
+
+        # Waterworks (水道局): random pipe square away from leaks, from its own RNG. Hand-made test
+        # maps (explicit masks) get none unless one is passed; without one, buying works anywhere.
+        if waterworks == "auto":
+            waterworks = self._pick_waterworks() if config.waterworks and not explicit_map else None
+        self.waterworks_pos: Pos | None = tuple(waterworks) if waterworks is not None else None
+        if self.waterworks_pos is not None:
+            self.cell(self.waterworks_pos).building = True
+        self._extra_leak_moves = sorted(m for m in config.extra_leak_moves if 0 < m <= config.max_moves)
 
         # Bots
         if spawns is None:
@@ -214,8 +228,12 @@ class Game:
             return None
         if not self.punk_spawned and self.move + 1 >= self.config.punk_spawn_move:
             self._spawn_punk()  # appears at the start of move number punk_spawn_move
+        while self._extra_leak_moves and self.move + 1 >= self._extra_leak_moves[0]:
+            self._spawn_leak(self._extra_leak_moves.pop(0))  # new leaks at moves 200, 300, 400
         bot_id = self.current_bot_id
         state = self._states[bot_id]
+        if PowerUp.SATELLITE in state.upgrades and self.move - state.satellite_since >= self.config.satellite_refresh:
+            self._satellite_image(bot_id)  # refreshed every satellite_refresh of the owner's moves
         from_pos = state.pos
         was_chained = state.chained_left > 0
         try:
@@ -325,6 +343,8 @@ class Game:
                 return fail("a bot is standing there")
             if cell.item is not None:
                 return fail("an object lies there")
+            if cell.building:
+                return fail("the waterworks cannot be dug up")
             cell.surface = Surface.UNEARTHED
             cell.revealed = True
             cell.dug_by = bot_id  # only the game master tracks diggers
@@ -343,10 +363,19 @@ class Game:
                 return fail("there is no pipe here")
             if cell.pipe_state is not PipeState.BROKEN:
                 return fail("pipe is not broken")
+            feeding = self.connected_neighbors(target)
+            still_open = [p for p in feeding if not (self.cell(p).valve and not self.cell(p).valve_open)]
+            if still_open:
+                return fail(f"turn off the water first: close valves on {sorted(still_open)}")
             cell.pipe_state = PipeState.FIXED
+            for p in feeding:  # each isolating valve now pays +5 to whoever reopens it
+                self.cell(p).valve_bonus = True
             state.leaks_fixed += 1
             self._award(state, cfg.points_leak_fixed)
             return ActionResult(action, True, points=cfg.points_leak_fixed)
+
+        if kind in (ActionType.INSTALL_VALVE, ActionType.CLOSE_VALVE, ActionType.OPEN_VALVE):
+            return self._valve_action(bot_id, action, cell)
 
         if kind is ActionType.REFILL:
             if cell.surface is not Surface.UNEARTHED:
@@ -367,6 +396,8 @@ class Game:
             return ActionResult(None, False, f"buy needs a PowerUp: {action!r}")
         if power_up not in BUYABLE:
             return ActionResult(action, False, f"{power_up.value} cannot be bought")
+        if self.waterworks_pos is not None and state.pos != self.waterworks_pos:
+            return ActionResult(action, False, "power-ups are sold at the waterworks: stand on it to buy")
         cost = self.config.power_up_cost(power_up)
         if power_up in state.upgrades:
             return ActionResult(action, False, f"{power_up.value} already bought")
@@ -381,16 +412,99 @@ class Game:
     def _on_power_up(self, bot_id: int, power_up: PowerUp) -> None:
         """Apply one-off effects at the moment of purchase (UT works later, inside detect)."""
         if power_up is PowerUp.SATELLITE:
-            # The buyer privately learns the whole network with risk grades. No points: every
-            # square counts as discovered, so later detects cannot pay +1 for it either.
-            state = self._states[bot_id]
-            for y, row in enumerate(self._cells):
-                for x, cell in enumerate(row):
-                    pos = (x, y)
-                    state.detected[pos] = cell.has_pipe
-                    state.discovered.add(pos)
-                    if cell.has_pipe:
-                        state.satellite[pos] = SatelliteReading(dirs_from_mask(cell.pipe_mask), cell.risk)
+            self._satellite_image(bot_id)
+
+    def _satellite_image(self, bot_id: int) -> None:
+        """Take (or retake) the buyer's private satellite image: whole network with risk grades.
+
+        No points: every square counts as discovered, so later detects cannot pay +1 for it.
+        The image is a snapshot: leaks that appear later only show up on the next refresh.
+        """
+        state = self._states[bot_id]
+        state.satellite_since = self.move
+        for y, row in enumerate(self._cells):
+            for x, cell in enumerate(row):
+                pos = (x, y)
+                state.detected[pos] = cell.has_pipe
+                state.discovered.add(pos)
+                if cell.has_pipe:
+                    state.satellite[pos] = SatelliteReading(dirs_from_mask(cell.pipe_mask), cell.risk)
+
+    # --- Waterworks, new leaks, valves -------------------------------------------------------
+    def connected_neighbors(self, pos: Pos) -> list[Pos]:
+        """In-grid squares the pipe at pos connects to (the ones to valve off before a fix)."""
+        mask = self.cell(pos).pipe_mask
+        return [p for d in Dir if mask & d.bit and self.in_bounds(p := d.step(pos))]
+
+    def _blocked_for_leaks(self) -> set[Pos]:
+        """Squares that must never leak: the waterworks and the pipes it connects to (never dug)."""
+        if self.waterworks_pos is None:
+            return set()
+        return {self.waterworks_pos, *self.connected_neighbors(self.waterworks_pos)}
+
+    def _pick_waterworks(self) -> Pos | None:
+        rng = random.Random(f"waterworks-{self.seed}")
+        leaks = set(self.leak_positions)
+        options = [
+            (x, y)
+            for y, row in enumerate(self._cells)
+            for x, c in enumerate(row)
+            if c.has_pipe and (x, y) not in leaks and not leaks & set(self.connected_neighbors((x, y)))
+        ]
+        return rng.choice(options) if options else None
+
+    def _spawn_leak(self, move: int) -> None:
+        """A new leak on a random buried, intact pipe square nobody has dug up yet.
+
+        Once anyone owns the satellite it only hits squares graded B or riskier. Its grade is
+        redrawn as a leak's; satellite owners see that only on their next refresh.
+        """
+        blocked = self._blocked_for_leaks()
+        satellite_up = any(PowerUp.SATELLITE in s.upgrades for s in self._states)
+        options = [
+            (x, y)
+            for y, row in enumerate(self._cells)
+            for x, c in enumerate(row)
+            if c.has_pipe and c.pipe_state is PipeState.OK and c.surface is Surface.UNTOUCHED
+            and not c.revealed and not c.valve and (x, y) not in blocked
+            and not (satellite_up and c.risk == "A")
+        ]
+        if not options:
+            return
+        rng = random.Random(f"leak-{self.seed}-{move}")
+        pos = rng.choice(options)
+        cell = self.cell(pos)
+        cell.pipe_state = PipeState.BROKEN
+        cell.risk = leak_grade(rng, self.config.risk_decay)
+        self.leak_positions = (*self.leak_positions, pos)
+
+    def _valve_action(self, bot_id: int, action: Action, cell: Cell) -> ActionResult:
+        """INSTALL_VALVE / CLOSE_VALVE / OPEN_VALVE on an unearthed pipe square."""
+        state = self._states[bot_id]
+        if cell.surface is not Surface.UNEARTHED or not cell.has_pipe:
+            return ActionResult(action, False, "valves only go on unearthed pipe squares")
+        if action.type is ActionType.INSTALL_VALVE:
+            if cell.valve:
+                return ActionResult(action, False, "there is already a valve here")
+            cell.valve, cell.valve_open = True, True
+            return ActionResult(action, True)
+        if not cell.valve:
+            return ActionResult(action, False, "there is no valve here")
+        if action.type is ActionType.CLOSE_VALVE:
+            if not cell.valve_open:
+                return ActionResult(action, False, "the valve is already closed")
+            cell.valve_open, cell.valve_closer = False, bot_id
+            return ActionResult(action, True)
+        if cell.valve_open:
+            return ActionResult(action, False, "the valve is already open")
+        cell.valve_open, cell.valve_closer = True, None
+        points = 0
+        if cell.valve_bonus:  # first reopening after the isolated leak was fixed (anyone can take it)
+            cell.valve_bonus = False
+            state.valves_reopened += 1
+            points = self.config.points_valve_reopened
+            self._award(state, points)
+        return ActionResult(action, True, points=points)
 
     # --- Punk upgrade ----------------------------------------------------------------------
     def _spawn_punk(self) -> None:
@@ -400,7 +514,7 @@ class Game:
             (x, y)
             for y, row in enumerate(self._cells)
             for x, c in enumerate(row)
-            if c.surface is Surface.UNTOUCHED and c.occupant is None and c.item is None
+            if c.surface is Surface.UNTOUCHED and c.occupant is None and c.item is None and not c.building
         ]
         if free:
             self.punk_pos = random.Random(f"punk-{self.seed}").choice(free)
@@ -460,6 +574,10 @@ class Game:
                     s = self._states[c.dug_by]
                     s.open_holes += 1
                     s.score -= penalty
+                if c.valve and not c.valve_open and c.valve_closer is not None:
+                    s = self._states[c.valve_closer]  # closed valves cost whoever closed them
+                    s.closed_valves += 1
+                    s.score -= self.config.penalty_closed_valve
         self.over = True
         for bot_id, bot in enumerate(self.bots):
             self._call_hook(bot_id, bot.on_game_end)

@@ -24,6 +24,8 @@ def test_hundred_rounds_fast_and_consistent():
             - seat.open_holes[i] * c.penalty_open_pipe_hole
             - seat.spent[i]
             + seat.bonus[i]
+            + seat.valves_reopened[i] * c.points_valve_reopened
+            - seat.closed_valves[i] * c.penalty_closed_valve
         )
         assert seat.scores[i] == expected
     assert seat.wins == 100  # single player always "wins"

@@ -170,6 +170,12 @@ def pick_leaks(masks: list[list[int]], n_leaks: int, rng: random.Random) -> list
     return rng.sample(pipe_cells, min(n_leaks, len(pipe_cells)))
 
 
+def leak_grade(rng: random.Random, decay: float) -> str:
+    """Grade of a leaking pipe: E, D, C, B with P ~ decay**k (E most likely)."""
+    levels = range(len(RISK_GRADES) - 1)
+    return RISK_GRADES[-1 - rng.choices(levels, [decay**k for k in levels])[0]]
+
+
 def pick_risk_grades(
     masks: list[list[int]], leaks: Iterable[Pos], rng: random.Random, decay: float
 ) -> dict[Pos, str]:

@@ -189,6 +189,8 @@ def test_ut_rescan_updates_an_old_reading():
     ok(g, Action.detect())
     assert g.states[0].detected_leaks[LEAK] is True
     ok(g, Action.unearth(Dir.DOWN))
+    for p in g.connected_neighbors(LEAK):  # test shortcut: valves closed around the leak
+        g.cell(p).valve, g.cell(p).valve_open = True, False
     ok(g, Action.fix(Dir.DOWN))
     ok(g, Action.refill(Dir.DOWN))
     assert g.states[0].detected_leaks[LEAK] is True  # stale until scanned again

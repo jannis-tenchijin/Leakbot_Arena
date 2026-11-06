@@ -38,6 +38,15 @@ def make_game(n_bots=1, spawns=((2, 1), (0, 0)), config=CONFIG):
 
 def buy_satellite(g, bot_id=0):
     g.states[bot_id].score = 30  # test shortcut: pretend the bot already earned these
+    if g.waterworks_pos is not None and g.states[bot_id].pos != g.waterworks_pos:
+        # test shortcut: teleport the buyer onto the waterworks, where power-ups are sold
+        g.cell(g.states[bot_id].pos).occupant = None
+        for i, s in enumerate(g.states):  # move anyone standing there out of the way
+            if s.pos == g.waterworks_pos:
+                g.cell(s.pos).occupant, s.pos = None, g.states[bot_id].pos
+                g.cell(s.pos).occupant = i
+        g.states[bot_id].pos = g.waterworks_pos
+        g.cell(g.waterworks_pos).occupant = bot_id
     result = g.apply_action(bot_id, Action.buy(PowerUp.SATELLITE))
     assert result.success, result.message
     return result
@@ -176,6 +185,8 @@ def test_grades_stay_fixed_when_a_leak_is_fixed():
     buy_satellite(g)
     before = BotView(g, 0).risk(LEAK)
     assert g.apply_action(0, Action.unearth(Dir.DOWN)).success
+    for p in g.connected_neighbors(LEAK):  # test shortcut: valves closed around the leak
+        g.cell(p).valve, g.cell(p).valve_open = True, False
     assert g.apply_action(0, Action.fix(Dir.DOWN)).success
     assert g.cell(LEAK).pipe_state is PipeState.FIXED
     assert BotView(g, 0).risk(LEAK) == g.cell(LEAK).risk == before

@@ -138,6 +138,8 @@ def test_hold_e_r_f_unearth_fix_refill_the_right_side(manual):
     assert game.states[0].invalid == 1 and "unearthed" in manual._toast[0]
     assert manual._toast[2] == app_module.theme.DANGER
 
+    for p in game.connected_neighbors(RIGHT):  # test shortcut: valves closed around the leak
+        game.cell(p).valve, game.cell(p).valve_open = True, False
     hold(manual, pygame.K_r, pygame.K_d)
     assert game.turn == 3 and cell.pipe_state is PipeState.FIXED
 

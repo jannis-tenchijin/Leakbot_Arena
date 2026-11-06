@@ -76,6 +76,9 @@ class ActionType(Enum):
     REFILL = "refill"
     BUY = "buy"  # buy a power-up with points
     CHAIN = "chain"  # punk only: put the ball and chain on an adjacent opponent (once per round)
+    INSTALL_VALVE = "install_valve"  # put a valve (open) on an unearthed pipe square
+    CLOSE_VALVE = "close_valve"  # turn an unearthed valve off
+    OPEN_VALVE = "open_valve"  # turn an unearthed valve on (+5 once after the leak it isolated is fixed)
 
 
 class PowerUp(Enum):
@@ -108,6 +111,18 @@ class Action:
     @classmethod
     def chain(cls, direction: Dir) -> Action:
         return cls(ActionType.CHAIN, direction)
+
+    @classmethod
+    def install_valve(cls, direction: Dir) -> Action:
+        return cls(ActionType.INSTALL_VALVE, direction)
+
+    @classmethod
+    def close_valve(cls, direction: Dir) -> Action:
+        return cls(ActionType.CLOSE_VALVE, direction)
+
+    @classmethod
+    def open_valve(cls, direction: Dir) -> Action:
+        return cls(ActionType.OPEN_VALVE, direction)
 
     # Convenience constructors so bot code reads naturally: Action.move(Dir.UP)
     @classmethod
@@ -143,6 +158,11 @@ class Cell:
     pipe_mask: int = 0  # connection bits (see Dir.bit); 0 means no pipe
     pipe_state: PipeState | None = None
     item: str | None = None  # game object lying here (PUNK_ITEM); collected by stepping onto it
+    building: bool = False  # the waterworks (水道局): walkable, never dug; power-ups are bought here
+    valve: bool = False  # a valve is installed in this pipe square
+    valve_open: bool = True  # valve position (only meaningful when valve is True)
+    valve_closer: int | None = None  # bot that closed the valve (charged if it is still closed at the end)
+    valve_bonus: bool = False  # reopening pays +points_valve_reopened (set when its leak gets fixed)
     risk: str | None = None  # satellite risk grade "A".."E" of a pipe square (fixed for the round)
     leak_found: bool = False  # a bot has already been credited for finding this leak
     revealed: bool = False  # was unearthed at some point: its pipe is public knowledge forever

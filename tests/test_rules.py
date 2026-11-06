@@ -165,22 +165,31 @@ def test_cannot_unearth_cell_with_bot():
     assert "standing" in bad(g, Action.unearth(Dir.RIGHT)).message
 
 
+def isolate(g, leak):
+    """Test shortcut: closed valves on every square the leak's pipe connects to."""
+    for p in g.connected_neighbors(leak):
+        g.cell(p).valve, g.cell(p).valve_open = True, False
+
+
 def test_fix_requires_unearthed_broken_pipe():
     g = make_game()
     assert "unearth" in bad(g, Action.fix(Dir.DOWN)).message
     ok(g, Action.unearth(Dir.UP))  # (2, 0): no pipe
     assert "no pipe" in bad(g, Action.fix(Dir.UP)).message
     ok(g, Action.unearth(Dir.DOWN))
+    assert "turn off the water" in bad(g, Action.fix(Dir.DOWN)).message
+    isolate(g, LEAK)
     r = ok(g, Action.fix(Dir.DOWN))
-    assert r.points == 15 and g.cell(LEAK).pipe_state is PipeState.FIXED
+    assert r.points == 40 and g.cell(LEAK).pipe_state is PipeState.FIXED
     assert "not broken" in bad(g, Action.fix(Dir.DOWN)).message
-    assert g.states[0].score == 5 + 15
+    assert g.states[0].score == 5 + 40
 
 
 def test_refill_blocked_on_leak_until_fixed():
     g = make_game()
     ok(g, Action.unearth(Dir.DOWN))
     assert "fix" in bad(g, Action.refill(Dir.DOWN)).message
+    isolate(g, LEAK)
     ok(g, Action.fix(Dir.DOWN))
     ok(g, Action.refill(Dir.DOWN))
     cell = g.cell(LEAK)
@@ -217,10 +226,11 @@ def test_open_pipe_holes_cost_the_latest_digger():
 def test_refilled_hole_is_not_penalised():
     g = make_game(config=replace(CONFIG, max_moves=1))
     ok(g, Action.unearth(Dir.DOWN))
+    isolate(g, LEAK)
     ok(g, Action.fix(Dir.DOWN))
     ok(g, Action.refill(Dir.DOWN))
     g.run()
-    assert g.states[0].score == 5 + 15 and g.states[0].open_holes == 0
+    assert g.states[0].score == 5 + 40 and g.states[0].open_holes == 0
 
 
 # --- Turn loop -------------------------------------------------------------------------------

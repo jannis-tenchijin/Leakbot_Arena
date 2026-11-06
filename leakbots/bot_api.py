@@ -33,6 +33,8 @@ class CellInfo:
     bot: int | None  # id of the bot standing here, if any
     revealed: bool = False  # unearthed now or earlier: stays known after a refill
     item: str | None = None  # game object lying here ("punk" pickup), visible to everyone
+    building: bool = False  # the waterworks (水道局): buy power-ups while standing here
+    valve: bool | None = None  # unearthed squares: None = no valve, True = open, False = closed
 
     @property
     def walkable(self) -> bool:
@@ -127,6 +129,8 @@ class BotView:
                 "open_hole_penalty": c.penalty_open_pipe_hole,
                 "ut_cost": c.cost_ut,
                 "satellite_cost": c.cost_satellite,
+                "valve_reopened": c.points_valve_reopened,
+                "closed_valve_penalty": c.penalty_closed_valve,
             }
         )
 
@@ -146,6 +150,29 @@ class BotView:
     def upgrades_of(self, bot_id: int) -> frozenset[PowerUp]:
         """Power-ups another bot has bought or collected (public: they are announced)."""
         return frozenset(self._game._states[bot_id].upgrades)
+
+    @property
+    def waterworks_pos(self) -> Pos | None:
+        """The waterworks (水道局) square: power-ups can only be bought standing here (None: anywhere)."""
+        return self._game.waterworks_pos
+
+    def connected_neighbors(self, pos: Pos) -> list[Pos]:
+        """In-grid squares a REVEALED pipe (dug up, or in your satellite image) connects to:
+        the squares to valve off before fixing a leak at pos. Empty if you can't know yet."""
+        cell = self.cell(pos)
+        dirs = cell.pipe_dirs or (self.satellite[pos].pipe_dirs if pos in self.satellite else frozenset())
+        return [p for d in dirs if self.in_bounds(p := d.step(pos))]
+
+    @property
+    def satellite_age(self) -> int | None:
+        """Moves since your satellite image was taken (refreshed every satellite_refresh moves)."""
+        state = self._game._states[self._bot_id]
+        return self._game.move - state.satellite_since if PowerUp.SATELLITE in state.upgrades else None
+
+    @property
+    def leaks_total(self) -> int:
+        """Leaks on the map so far (new ones appear at config.extra_leak_moves). Public."""
+        return len(self._game.leak_positions)
 
     # --- Punk upgrade --------------------------------------------------------------------
     @property
@@ -196,8 +223,10 @@ class BotView:
                 c.occupant,
                 revealed=True,
                 item=c.item,
+                building=c.building,
+                valve=(c.valve_open if c.valve else None) if c.surface is Surface.UNEARTHED else None,
             )
-        return CellInfo(pos, c.surface, None, None, frozenset(), c.occupant, item=c.item)
+        return CellInfo(pos, c.surface, None, None, frozenset(), c.occupant, item=c.item, building=c.building)
 
     def surface(self, pos: Pos) -> Surface:
         """Fast shortcut for ``cell(pos).surface``."""
