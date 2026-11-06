@@ -68,27 +68,27 @@ def test_cannot_move_onto_other_bot():
 # --- Detect ----------------------------------------------------------------------------------
 def test_detect_scores_once_per_pipe_cell_and_is_private():
     g = make_game(n_bots=2)
-    r = ok(g, Action.detect(Dir.DOWN))
-    assert r.detected_pipe is True and r.points == 1 and r.detected_leak is None
-    assert ok(g, Action.detect(Dir.DOWN)).points == 0  # same cell again: no points
-    assert ok(g, Action.detect(Dir.UP)).detected_pipe is False
+    r = ok(g, Action.detect())  # around (2, 1): only (2, 2) below holds a pipe
+    assert r.scan == {(2, 0): False, (2, 2): True, (1, 1): False, (3, 1): False}
+    assert r.points == 1 and r.scan_leaks is None
+    assert ok(g, Action.detect()).points == 0  # same squares again: no points
     assert g.states[0].score == 1 and g.states[0].pipes_detected == 1
-    assert dict(BotView(g, 0).detected) == {(2, 2): True, (2, 0): False}
-    assert dict(BotView(g, 1).detected) == {}  # other bot learns nothing
+    assert dict(BotView(g, 0).detected) == {(2, 1): False, **r.scan}  # spawn square + scan
+    assert dict(BotView(g, 1).detected) == {(0, 0): False}  # other bot only knows its spawn
 
 
 def test_detect_on_unearthed_pipe_scores_nothing():
     g = make_game()
     ok(g, Action.unearth(Dir.DOWN))
-    assert ok(g, Action.detect(Dir.DOWN)).points == 0
+    assert ok(g, Action.detect()).points == 0
 
 
 def test_pipe_point_never_twice_after_dig_and_refill():
     g = make_game(spawns=((1, 1),))
-    assert ok(g, Action.detect(Dir.DOWN)).points == 1  # (1, 2) pipe, first time
+    assert ok(g, Action.detect()).points == 1  # (1, 2) pipe, first time
     ok(g, Action.unearth(Dir.DOWN))
     ok(g, Action.refill(Dir.DOWN))
-    assert ok(g, Action.detect(Dir.DOWN)).points == 0  # covered again, still discovered
+    assert ok(g, Action.detect()).points == 0  # covered again, still discovered
     assert g.states[0].score == 1
 
 
@@ -96,11 +96,10 @@ def test_unearthed_pipe_counts_as_discovered_for_every_bot():
     g = make_game(n_bots=2, spawns=((1, 1), (1, 3)))
     ok(g, Action.unearth(Dir.UP), bot_id=1)  # bot 1 digs (1, 2) without detecting
     ok(g, Action.refill(Dir.UP), bot_id=1)
-    assert ok(g, Action.detect(Dir.DOWN), bot_id=0).points == 0  # bot 0 saw it dug open
-    assert ok(g, Action.detect(Dir.UP), bot_id=1).points == 0
-    assert ok(g, Action.detect(Dir.RIGHT), bot_id=0).points == 0  # (2, 1): no pipe
+    assert ok(g, Action.detect(), bot_id=0).points == 0  # bot 0 saw (1, 2) dug open
+    assert ok(g, Action.detect(), bot_id=1).points == 0
     ok(g, Action.move(Dir.RIGHT), bot_id=0)  # bot 0 -> (2, 1)
-    assert ok(g, Action.detect(Dir.DOWN), bot_id=0).points == 1  # (2, 2) never dug: +1
+    assert ok(g, Action.detect(), bot_id=0).points == 1  # (2, 2) never dug: +1
 
 
 def test_refilled_square_stays_public():
@@ -143,9 +142,10 @@ def test_ut_reports_leaks_without_points():
     g = make_game()
     give_points(g, 0, 15)
     ok(g, Action.buy(PowerUp.UT))
-    r = ok(g, Action.detect(Dir.DOWN))  # the leak square
+    r = ok(g, Action.detect())  # around (2, 1), including the leak square below
     assert r.points == 1  # only the pipe discovery; seeing the leak pays nothing
-    assert dict(BotView(g, 0).detected_leaks) == {LEAK: True}
+    assert r.scan_leaks == {(2, 0): False, LEAK: True, (1, 1): False, (3, 1): False}
+    assert dict(BotView(g, 0).detected_leaks) == r.scan_leaks  # spawn square was scanned before UT
     assert not g.cell(LEAK).leak_found  # unearthing it still pays the +5
     assert ok(g, Action.unearth(Dir.DOWN)).points == 5
 

@@ -184,7 +184,9 @@ class BoardRenderer:
             if move_time > 0:
                 self._tween[event.bot_id] = (self.cell_center(event.from_pos), self.cell_center(event.target), now, move_time)
         elif kind is ActionType.DETECT:
-            self._add(Effect("ping", event.target, now, 0.45, color if res.detected_pipe else theme.MUTED))
+            # One light ping per scanned square (DETECT has no single target)
+            for pos, had_pipe in (res.scan or {}).items():
+                self._add(Effect("ping", pos, now, 0.45, color if had_pipe else theme.MUTED))
         elif kind is ActionType.UNEARTH:
             rng = random.Random(event.turn)
             parts = [(rng.uniform(-1, 1), rng.uniform(-1.6, -0.6)) for _ in range(7)]
@@ -196,7 +198,7 @@ class BoardRenderer:
         elif kind is ActionType.BUY:
             self._add(Effect("spark", event.from_pos, now, 0.8, theme.ACCENT))
         if res.points:
-            anchor = event.target or event.from_pos  # BUY has no target square
+            anchor = event.target or event.from_pos  # DETECT and BUY have no target square
             text = f"+{res.points}" if res.points > 0 else str(res.points)
             self._add(Effect("points", anchor, now, 0.9, color if res.points > 0 else theme.DANGER, text=text))
 
@@ -306,7 +308,10 @@ class BoardRenderer:
             color = theme.BOT_COLORS[bot_id % len(theme.BOT_COLORS)]
             fx, fy = corners[bot_id % 4]
             for (x, y), had_pipe in state.detected.items():
-                if g.cells[y][x].surface is not Surface.UNTOUCHED:
+                cell = g.cells[y][x]
+                # Holes show the truth anyway; a bot always stands on a square it auto-detected,
+                # so a mark there would only peek out from under its sprite
+                if cell.surface is not Surface.UNTOUCHED or cell.occupant is not None:
                     continue
                 center = (self.origin[0] + (x + fx) * t, self.origin[1] + (y + fy) * t)
                 pygame.draw.circle(surf, (10, 10, 20), center, r + 1)
@@ -379,7 +384,8 @@ def draw_robot(surf: pygame.Surface, center: tuple[float, float], t: int, color:
 def _draw_effect(surf: pygame.Surface, e: Effect, k: float, center: tuple[float, float], t: int) -> None:
     cx, cy = center
     if e.kind == "ping":
-        pygame.draw.circle(surf, e.color, (cx, cy), int(t * (0.15 + 0.5 * k)), width=2)
+        # Light ring that stays inside its square (detect pings four squares at once)
+        pygame.draw.circle(surf, e.color, (cx, cy), int(t * (0.1 + 0.32 * k)), width=2 if k < 0.5 else 1)
     elif e.kind == "dust":
         for vx, vy in e.particles:
             px = cx + vx * t * 0.6 * k

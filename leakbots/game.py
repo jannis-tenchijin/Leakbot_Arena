@@ -7,8 +7,9 @@ Terms: a *move* is one action by one bot (bots take turns); a *round* is one who
 from __future__ import annotations
 
 import random
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from types import MappingProxyType
 
 from .bot_api import ActionResult, BaseBot, BotView
 from .config import DEFAULT_CONFIG, GameConfig
@@ -109,6 +110,9 @@ class Game:
         self.turn = 0  # total actions taken so far
         self.over = False
         self.history: list[MoveEvent] = []
+        # Auto-detect every spawn square before the hooks run, so bots already see it there
+        for bot_id, state in enumerate(self._states):
+            self._scan(bot_id, [state.pos])
         for bot_id, bot in enumerate(self.bots):
             self._call_hook(bot_id, bot.on_game_start)
 
@@ -195,8 +199,10 @@ class Game:
         state.actions += 1
         state.invalid += not result.success
         state.last_result = result
-        direction = result.action.direction if result.action is not None else None
-        target = direction.step(from_pos) if direction is not None else None
+        # Only directional actions have a target square (DETECT scans around the bot, BUY has none)
+        done = result.action
+        aimed = done is not None and done.type not in (ActionType.DETECT, ActionType.BUY)
+        target = done.direction.step(from_pos) if aimed else None
         event = MoveEvent(self.turn, bot_id, from_pos, target, result.action, result)
         self.history.append(event)
 
@@ -220,6 +226,12 @@ class Game:
         if action.type is ActionType.BUY:
             return self._buy(bot_id, action)
 
+        if action.type is ActionType.DETECT:
+            # Always valid: scans the in-grid orthogonal neighbours; any direction is ignored
+            around = [p for p in (d.step(state.pos) for d in Dir) if self.in_bounds(p)]
+            points, scan, scan_leaks = self._scan(bot_id, around)
+            return ActionResult(action, True, points=points, scan=scan, scan_leaks=scan_leaks)
+
         # Every other action targets the neighbouring square in a direction
         if not isinstance(action.direction, Dir):
             return ActionResult(None, False, f"{action.type.value} needs a Dir: {action!r}")
@@ -239,27 +251,9 @@ class Game:
             self.cell(state.pos).occupant = None
             cell.occupant = bot_id
             state.pos = target
-            return ActionResult(action, True)
-
-        if kind is ActionType.DETECT:
-            points = 0
-            has_pipe = cell.has_pipe
-            state.detected[target] = has_pipe
-            # +1 only for a pipe square that is new to this bot: never detected by it before and
-            # never unearthed by anyone (unearthed squares were seen by every bot; refilling
-            # does not make a pipe "undiscovered")
-            if has_pipe and not cell.revealed and target not in state.discovered:
-                state.discovered.add(target)
-                state.pipes_detected += 1
-                points += cfg.points_pipe_detected
-            leak = None
-            if PowerUp.UT in state.upgrades:
-                # UT reports leaks on every square detected after buying it; no points for that
-                # (a leak still has to be unearthed for +found and fixed for +fixed)
-                leak = cell.pipe_state is PipeState.BROKEN
-                state.detected_leaks[target] = leak
-            self._award(state, points)
-            return ActionResult(action, True, points=points, detected_pipe=has_pipe, detected_leak=leak)
+            # Free auto-detect of the square the bot just stepped onto
+            points, scan, scan_leaks = self._scan(bot_id, [target])
+            return ActionResult(action, True, points=points, scan=scan, scan_leaks=scan_leaks)
 
         if kind is ActionType.UNEARTH:
             if cell.surface is Surface.UNEARTHED:
@@ -321,6 +315,35 @@ class Game:
         """Apply one-off effects at the moment of purchase (UT works later, inside detect)."""
 
     # --- Internals -------------------------------------------------------------------------
+    def _scan(
+        self, bot_id: int, squares: Iterable[Pos]
+    ) -> tuple[int, Mapping[Pos, bool], Mapping[Pos, bool] | None]:
+        """Detect squares for a bot (DETECT and the free auto-detect share this).
+
+        Records each square in the bot's private memory, pays for newly discovered pipes and,
+        with UT, reads leaks. Returns (points, scan, scan_leaks) for the ActionResult.
+        """
+        state = self._states[bot_id]
+        has_ut = PowerUp.UT in state.upgrades
+        scan: dict[Pos, bool] = {}
+        leaks: dict[Pos, bool] = {}
+        points = 0
+        for pos in squares:
+            cell = self.cell(pos)
+            scan[pos] = state.detected[pos] = cell.has_pipe
+            # +1 only for a pipe square that is new to this bot: never detected by it before and
+            # never unearthed by anyone (unearthed squares were seen by every bot; refilling
+            # does not make a pipe "undiscovered")
+            if cell.has_pipe and not cell.revealed and pos not in state.discovered:
+                state.discovered.add(pos)
+                state.pipes_detected += 1
+                points += self.config.points_pipe_detected
+            if has_ut:
+                # UT reading: no points and no leak_found (unearth still pays +found, fix +fixed)
+                leaks[pos] = state.detected_leaks[pos] = cell.pipe_state is PipeState.BROKEN
+        self._award(state, points)
+        return points, MappingProxyType(scan), MappingProxyType(leaks) if has_ut else None
+
     def _award(self, state: BotState, points: int) -> None:
         if points:
             state.score += points
