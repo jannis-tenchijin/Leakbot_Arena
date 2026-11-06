@@ -41,7 +41,7 @@ Five pipe squares are broken (leaking). Bots cannot see buried pipes.
 | Action          | Valid when…                                   | Effect                                                         |
 |-----------------|-----------------------------------------------|----------------------------------------------------------------|
 | `move(d)`       | target is inside, untouched and free          | the bot steps there (and the new square is auto-detected)      |
-| `detect()`      | always                                        | scans all four neighbouring squares at once (private result)   |
+| `detect()`      | always                                        | scans the four neighbouring squares inside the grid at once (private result) |
 | `unearth(d)`    | target is untouched and free                  | the square becomes a hole; holes cannot be walked on           |
 | `fix(d)`        | target is an unearthed **broken** pipe        | the pipe becomes fixed                                         |
 | `refill(d)`     | target is any hole, except a leaking pipe     | the square becomes untouched (walkable) again                  |
@@ -88,8 +88,8 @@ Ranking: highest score, then fewer invalid moves, then whoever reached their sco
 | RESTART / `R`         | replay the same map (same seed)                                  |
 | NEW MAP / `N`         | roll a new random map                                            |
 | SIMULATE 100 ROUNDS / `M` | play 100 headless rounds with the current bots, show statistics |
-| PIPES / `P`           | game-master toggle: buried pipes hidden or faintly visible       |
-| MARKS / `D`           | show each bot's private detect results as dots                   |
+| PIPES / `P`           | game-master toggle: buried pipes hidden or faintly visible; once a bot owns the satellite, GHOST also shows the A–E risk grades |
+| MARKS / `D`           | show each bot's private detect results as dots (not for satellite owners, who know every square) |
 | RULES / `H`           | open the rulebook: every action, its limits and the scoring      |
 | EN \| 日本語 / `L`      | switch all text between English and Japanese (top right)         |
 | Speed slider / `↑ ↓`  | 1 – 500 moves per second, far right = MAX                        |

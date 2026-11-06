@@ -108,7 +108,8 @@ _RULES: dict[str, dict[str, list[Section]]] = {
                 ("", "Actions aim at a neighbouring square UP, DOWN, LEFT or RIGHT, never at the "
                      "bot's own square. DETECT and BUY need no direction."),
                 ("MOVE", "Step onto an untouched, empty square. Holes and other bots block the way."),
-                ("DETECT", "Scan all four neighbouring squares at once and learn privately which hold a pipe."),
+                ("DETECT", "Scan the four neighbouring squares (those inside the grid) at once and learn "
+                           "privately which hold a pipe."),
                 ("UNEARTH", "Dig the square open. It must be untouched and empty."),
                 ("FIX", "Repair a broken pipe in an unearthed square."),
                 ("REFILL", "Fill any hole back in, whoever dug it. A leaking pipe must be fixed first."),
@@ -124,7 +125,7 @@ _RULES: dict[str, dict[str, list[Section]]] = {
         ],
         "right": [
             ("POWER-UPS", [
-                ("UT", "{ut} points. Every detect from now on also shows whether the scanned squares "
+                ("UT", "{ut} points. Every detect and auto-detect from now on also shows whether the scanned squares "
                        "leak (scan a square again to update an old result). No points for leaks seen "
                        "this way: unearth and fix them to score."),
                 ("SAT", "{sat} points. The Tenchijin satellite shows you the whole pipe network with "
@@ -168,7 +169,7 @@ _RULES: dict[str, dict[str, list[Section]]] = {
                 ("", "行動は上下左右いずれかの隣のマスが対象で、自分のマスには使えない。"
                      "探知と購入は方向の指定が不要。"),
                 ("移動", "未掘削で空いているマスへ進む。穴と他のボットは通れない。"),
-                ("探知", "上下左右の4マスを同時にスキャンし、配管があるかを自分だけが知る。"),
+                ("探知", "上下左右の4マス(盤面内のみ)を同時にスキャンし、配管があるかを自分だけが知る。"),
                 ("掘削", "マスを掘り起こす。未掘削で空いているマスのみ。"),
                 ("修理", "掘り起こしたマスの壊れた配管を直す。"),
                 ("埋め戻し", "誰が掘った穴でも埋め戻せる。漏水中の配管は先に修理が必要。"),
@@ -184,7 +185,7 @@ _RULES: dict[str, dict[str, list[Section]]] = {
         ],
         "right": [
             ("パワーアップ", [
-                ("UT", "{ut}点。以後の探知で、スキャンしたマスの漏水の有無も分かる(古い結果は"
+                ("UT", "{ut}点。以後の探知と自動探知で、スキャンしたマスの漏水の有無も分かる(古い結果は"
                        "もう一度探知すると更新)。この方法で見つけた漏水に得点はなし:"
                        "掘り起こして修理すると得点。"),
                 ("衛星", "{sat}点。天地人衛星で配管網全体と、配管マスごとのリスク等級A〜E"
