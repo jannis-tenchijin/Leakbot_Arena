@@ -81,12 +81,20 @@ Ranking: highest score, then fewer invalid moves, then whoever reached their sco
 
 ## Controls
 
+**Choosing bots and mode in the window:** click **SETUP** (or press `B`). Every bot in `bots/` is
+loaded automatically and listed there; pick a mode tab, use `<` `>` to choose the bot for each
+seat (the same bot may sit in several seats), add or remove seats in battle royale, then
+**START ROUND** (or Enter). The map stays the same; NEW MAP rolls a new one. `--bots` / `?bots=`
+only set the line-up you start with. A bot file that fails to import is skipped and named in a
+red message instead of crashing the arena.
+
 | Button / key          | Does                                                             |
 |-----------------------|------------------------------------------------------------------|
 | PLAY / `Space`        | play or pause live turns                                         |
 | STEP / `S`            | advance a single turn                                            |
 | RESTART / `R`         | replay the same map (same seed)                                  |
 | NEW MAP / `N`         | roll a new random map                                            |
+| SETUP / `B`           | choose the mode (single, 1 vs 1, battle royale 3–8 bots, manual) and the bot for every seat, then START ROUND |
 | RUN 100 ROUNDS / `M`  | play 100 headless rounds with the current bots, show statistics  |
 | PIPES / `P`           | game-master toggle: buried pipes hidden or faintly visible; once a bot owns the satellite, GHOST also shows the A–E risk grades |
 | MARKS / `D`           | show each bot's private detect results as dots (not for satellite owners, who know every square) |

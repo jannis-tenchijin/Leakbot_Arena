@@ -33,6 +33,8 @@ leaking water pipes on a grid. Python 3.10+, pygame-ce for the viewer, pytest fo
 
 ## Architecture rules
 
+- Bots are found automatically (`loader.discover_bots`): every `bots/*.py` BaseBot subclass shows
+  up in SETUP. A bot file must import without side effects; a failing import is skipped, not fatal.
 - `leakbots/` (except `leakbots/gui/`) must never import pygame. The engine runs headless so
   simulations stay fast; check with `grep -rn pygame leakbots --include='*.py' | grep -v gui/`.
 - Bots only receive a `BotView` (`leakbots/bot_api.py`). Never pass `Game`, `Cell` or

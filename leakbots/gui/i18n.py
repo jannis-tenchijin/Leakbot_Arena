@@ -40,6 +40,27 @@ _TEXT: dict[str, tuple[str, str]] = {
     "rules": ("RULES", "ルール"),
     "rulebook_title": ("RULEBOOK", "ルールブック"),
     "close": ("CLOSE", "閉じる"),
+    # Setup overlay
+    "setup": ("SETUP", "セットアップ"),
+    "setup_title": ("GAME SETUP", "ゲーム設定"),
+    "tab_single": ("SINGLE PLAYER", "シングルプレイ"),
+    "tab_duel": ("1 VS 1", "1対1"),
+    "tab_royale": ("BATTLE ROYALE", "バトルロイヤル"),
+    "tab_manual": ("MANUAL", "手動"),
+    "seat": ("BOT {n}", "ボット {n}"),
+    "setup_seats": ("{n} seats  ·  {total} bots found in bots/", "{n}席  ・  bots/ のボット {total}体"),
+    "add_seat": ("+ ADD BOT", "+ ボット追加"),
+    "remove_seat": ("- REMOVE BOT", "- ボット削除"),
+    "start_round": ("START ROUND", "ラウンド開始"),
+    "setup_manual": ("You play one bot yourself with the keyboard.\n"
+                     "W A S D move  ·  Q detect  ·  hold E / R / F + W A S D: dig up / fix / refill\n"
+                     "1 buy UT  ·  2 buy satellite",
+                     "キーボードで自分のボットを1体操作します。\n"
+                     "W A S D 移動  ・  Q 探知  ・  E / R / F を押したまま W A S D: 掘削 / 修理 / 埋め戻し\n"
+                     "1 UT購入  ・  2 衛星購入"),
+    "setup_hint": ("Click < > to pick a bot  ·  Enter starts  ·  Esc closes",
+                   "< > でボットを選択  ・  Enterで開始  ・  Escで閉じる"),
+    "toast_bots_failed": ("Could not load {files}", "{files} を読み込めませんでした"),
     # Speed + scoreboard
     "speed": ("SPEED", "速度"),
     "rate": ("{n} moves/s", "{n} 手/秒"),

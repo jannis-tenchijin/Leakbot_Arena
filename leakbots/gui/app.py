@@ -1,4 +1,4 @@
-"""Pygame front end: live board, controls, scoreboard, rulebook and the 100-game simulation.
+"""Pygame front end: live board, controls, scoreboard, setup, rulebook and the simulation.
 
 Runs on the desktop and in the browser (pygbag/WebAssembly). Browser constraints: the main
 loop must be async and yield every frame, and there are no threads, so the simulation is
@@ -12,7 +12,7 @@ import random
 import shutil
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pygame
@@ -20,13 +20,14 @@ import pygame
 from ..bot_api import BaseBot
 from ..config import DEFAULT_CONFIG, GameConfig
 from ..game import Game
-from ..loader import SPRITES_DIR, sprite_path
-from ..model import RISK_GRADES, Action, PowerUp
+from ..loader import SPRITES_DIR, bot_spec, discover_bots, sprite_path
+from ..model import RISK_GRADES, Action, Dir, PowerUp
 from ..simulation import SimulationResult, SimulationRunner, seat_labels
 from . import theme
 from .i18n import LANGS, rulebook, tr
 from .manual import GAME_KEYS, HELP_ROWS, HumanBot, ManualControls
 from .render import BoardRenderer, draw_robot
+from .setup import MODES, GameSetup
 from .widgets import Button, Slider, Switch, draw_progress, wrap_text
 
 WEB = sys.platform == "emscripten"  # running in a browser via pygbag
@@ -55,6 +56,11 @@ class App:
         theme.reset_fonts()
         self.base_bots = list(bot_classes)  # the line-up MANUAL hands back to
         self.manual = manual  # a human plays the only seat with the keyboard
+        # Every bot in bots/ is always loaded, so SETUP can put any of them in any seat
+        found, self.failed_bots = discover_bots()
+        self.setup = GameSetup(found or self.base_bots, self.base_bots, manual)
+        self.show_setup = False
+        self._setup_hits: list[tuple[pygame.Rect, Callable[[], None]]] = []
         self.controls = ManualControls()
         self.config = config
         self.sim_rounds = sim_rounds
@@ -89,6 +95,8 @@ class App:
         self._set_lineup()
         self.new_game(seed)
         self._build_widgets()
+        if self.failed_bots:
+            self.toast(self.t("toast_bots_failed", files=", ".join(self.failed_bots)), theme.DANGER)
 
     def _set_lineup(self) -> None:
         """Seats for the next round: the human alone in manual mode, else the start line-up."""
@@ -156,6 +164,27 @@ class App:
 
     def toggle_rules(self) -> None:
         self.show_rules = not self.show_rules
+        self.show_setup = False
+
+    # --- Setup ------------------------------------------------------------------------------
+    def toggle_setup(self) -> None:
+        """Open/close the SETUP overlay (mode + bot for every seat)."""
+        self.show_setup = not self.show_setup
+        self.show_rules = False
+
+    def start_setup(self) -> None:
+        """START: begin a round with the mode and bots picked in SETUP (same map)."""
+        bots, manual = self.setup.lineup()
+        if self.simulating:
+            self.toggle_simulation()
+        if not manual:
+            self.base_bots = bots  # also what MANUAL hands back to
+        self.manual = manual
+        self.controls.reset()
+        self.sim_result = None  # old statistics belonged to another line-up
+        self._set_lineup()
+        self.new_game(self.seed)
+        self.show_setup = False
 
     @property
     def is_max_speed(self) -> bool:
@@ -257,6 +286,7 @@ class App:
         def auto() -> bool:  # bots play: the clock buttons work (in manual mode a key press is the clock)
             return not self.game.over and not self.manual
 
+        setup_w = 100  # second row: SETUP | NEW MAP | RUN 100 ROUNDS
         # Third row: PIPES | MARKS | MANUAL, widths sized to the longest label of each (at size 12)
         pipes_w, marks_w = 120, 98
         manual_x = x + pipes_w + marks_w + 2 * gap
@@ -268,10 +298,13 @@ class App:
                    enabled=auto),
             Button(r(1, y1, w3), lambda: self.t("step"), self.step_once, enabled=auto),
             Button(r(2, y1, w3), lambda: self.t("restart"), self.restart),
-            Button(r(0, y2, w2), lambda: self.t("new_map"), self.new_game),
-            Button(r(1, y2, w2),
+            Button(pygame.Rect(x, y2, setup_w, h), lambda: self.t("setup"), self.toggle_setup,
+                   accent=theme.WATER, size=12),
+            Button(pygame.Rect(x + setup_w + gap, y2, setup_w, h), lambda: self.t("new_map"), self.new_game,
+                   size=12),
+            Button(pygame.Rect(x + 2 * (setup_w + gap), y2, w - 2 * (setup_w + gap), h),
                    lambda: self.t("cancel_sim") if self.simulating else self.t("simulate", n=self.sim_rounds),
-                   self.toggle_simulation, enabled=lambda: not self.manual, accent=theme.GOOD),
+                   self.toggle_simulation, enabled=lambda: not self.manual, accent=theme.GOOD, size=12),
             Button(pygame.Rect(x, y3, pipes_w, h),
                    lambda: self.t("pipes_ghost" if self.ghost_pipes else "pipes_hidden"),
                    self._toggle_pipes, accent=theme.WATER, size=12),
@@ -291,6 +324,8 @@ class App:
                                    self.toggle_rules, accent=theme.TEXT, size=12)
         self.close_rules_button = Button(pygame.Rect(right - 96 - 8 - 96, MARGIN, 96, 28),
                                          lambda: self.t("close"), self.toggle_rules, accent=theme.DANGER)
+        self.close_setup_button = Button(pygame.Rect(right - 96 - 8 - 96, MARGIN, 96, 28),
+                                         lambda: self.t("close"), self.toggle_setup, accent=theme.DANGER)
 
         # Largest logo size that stays clear of the corner buttons (fonts differ per platform)
         room = self.rules_button.rect.x - x - 8
@@ -322,6 +357,13 @@ class App:
             self._handle_mouse(event)
 
     def _handle_key(self, key: int) -> None:
+        if self.show_setup:  # the overlay owns the keyboard: Esc/B close, Enter starts, L language
+            setup_keys = {pygame.K_ESCAPE: self.toggle_setup, pygame.K_b: self.toggle_setup,
+                          pygame.K_RETURN: self.start_setup, pygame.K_KP_ENTER: self.start_setup,
+                          pygame.K_l: self.toggle_language}
+            if key in setup_keys:
+                setup_keys[key]()
+            return
         if key == pygame.K_ESCAPE:
             if self.show_rules:
                 self.show_rules = False
@@ -337,6 +379,7 @@ class App:
         keys = {
             pygame.K_h: self.toggle_rules,
             pygame.K_l: self.toggle_language,
+            pygame.K_b: self.toggle_setup,
         }
         if self.manual and not self.show_rules:  # no play/step/sim/speed keys: a key press is the clock
             keys.update({
@@ -360,6 +403,17 @@ class App:
 
     def _handle_mouse(self, event: pygame.event.Event) -> None:
         if self.lang_switch.handle(event):
+            return
+        if self.show_setup:
+            if self.close_setup_button.handle(event):
+                return
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                for rect, action in self._setup_hits:
+                    if rect.collidepoint(event.pos):
+                        action()
+                        return
+            if event.type == pygame.MOUSEBUTTONUP and not self._rules_panel().collidepoint(event.pos):
+                self.show_setup = False  # click outside the panel closes it
             return
         if self.show_rules:
             # Only the close button and the language switch work over the rulebook
@@ -407,6 +461,8 @@ class App:
         self._draw_sidebar(now)
         if self.show_rules:
             self._draw_rulebook()
+        if self.show_setup:
+            self._draw_setup()
         self.lang_switch.draw(self.screen)  # always on top, also over the rulebook
 
     def _text(self, text: str, pos: tuple[int, int], size: int = 13, color=theme.TEXT, bold=False, right=False):
@@ -685,3 +741,83 @@ class App:
                 y += line_h * len(lines) + 5
             y += 12
         return y
+
+    # --- Setup overlay ----------------------------------------------------------------------
+    def _draw_setup(self) -> None:
+        """Mode tabs, one row per seat with < bot > arrows, +/- seats (battle royale), START."""
+        shade = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
+        shade.fill((6, 6, 20, 225))
+        self.screen.blit(shade, (0, 0))
+        panel = self._rules_panel()
+        pygame.draw.rect(self.screen, theme.PANEL, panel, border_radius=10)
+        pygame.draw.rect(self.screen, theme.WATER, panel, width=3, border_radius=10)
+        self._text(self.t("setup_title"), (MARGIN + 4, MARGIN + 2), 26, theme.WATER, bold=True)
+        self.close_setup_button.draw(self.screen)
+
+        setup = self.setup
+        hits: list[tuple[pygame.Rect, Callable[[], None]]] = []
+
+        def button(rect: pygame.Rect, label: str, action: Callable[[], None], accent=theme.ACCENT,
+                   enabled: bool = True, size: int = 13) -> None:
+            Button(rect, label, action, enabled=lambda: enabled, accent=accent, size=size).draw(self.screen)
+            if enabled:
+                hits.append((rect, action))
+
+        pad = 22
+        x0, y = panel.x + pad, panel.y + pad
+        inner_w = panel.w - 2 * pad
+
+        # Mode tabs
+        tab_w = (inner_w - 3 * 10) // 4
+        for i, mode in enumerate(MODES):
+            rect = pygame.Rect(x0 + i * (tab_w + 10), y, tab_w, 40)
+            if mode == setup.mode:
+                pygame.draw.rect(self.screen, theme.ACCENT, rect, border_radius=6)
+                img = theme.font(14, bold=True).render(self.t(f"tab_{mode}"), True, (14, 16, 38))
+                self.screen.blit(img, img.get_rect(center=rect.center))
+            else:
+                button(rect, self.t(f"tab_{mode}"), lambda m=mode: setup.set_mode(m), size=14)
+        y += 62
+
+        if setup.mode == "manual":
+            for i, line in enumerate(self.t("setup_manual").split("\n")):
+                self._text(line, (x0, y + 26 * i), 16, theme.TEXT if i == 0 else theme.MUTED, bold=i == 0)
+        else:
+            self._text(self.t("setup_seats", n=len(setup.seats), total=len(setup.available)), (x0, y), 13,
+                       theme.MUTED)
+            y += 30
+            name_w = 360
+            for seat, cls in enumerate(setup.seats):
+                color = theme.BOT_COLORS[seat % len(theme.BOT_COLORS)]
+                row = pygame.Rect(x0, y, inner_w, 44)
+                pygame.draw.rect(self.screen, (20, 22, 50), row, border_radius=6)
+                icon = pygame.Rect(row.x + 8, row.y + 4, 36, 36)
+                img = self.renderer.sprite(sprite_path(cls), 34)
+                if img is not None:
+                    self.screen.blit(img, img.get_rect(center=icon.center))
+                else:
+                    draw_robot(self.screen, icon.center, 34, color, Dir.RIGHT)
+                self._text(self.t("seat", n=seat + 1), (icon.right + 12, row.y + 13), 14, color, bold=True)
+                left = pygame.Rect(icon.right + 110, row.y + 5, 40, 34)
+                name_box = pygame.Rect(left.right + 8, row.y + 5, name_w, 34)
+                right = pygame.Rect(name_box.right + 8, row.y + 5, 40, 34)
+                button(left, "<", lambda s=seat: setup.cycle(s, -1))
+                pygame.draw.rect(self.screen, theme.PANEL, name_box, border_radius=6)
+                pygame.draw.rect(self.screen, theme.PANEL_EDGE, name_box, width=2, border_radius=6)
+                name = theme.font(15, bold=True).render(cls.display_name(), True, theme.TEXT)
+                self.screen.blit(name, name.get_rect(midleft=(name_box.x + 12, name_box.centery)))
+                spec = theme.font(11).render(bot_spec(cls), True, theme.MUTED)
+                self.screen.blit(spec, spec.get_rect(midright=(name_box.right - 10, name_box.centery)))
+                button(right, ">", lambda s=seat: setup.cycle(s, +1))
+                y += 50
+            if setup.mode == "royale":
+                button(pygame.Rect(x0, y + 4, 120, 34), self.t("remove_seat"), setup.remove_seat,
+                       enabled=setup.can_remove(), size=12)
+                button(pygame.Rect(x0 + 130, y + 4, 120, 34), self.t("add_seat"), setup.add_seat,
+                       enabled=setup.can_add(), size=12)
+
+        # Footer: hint + START
+        start = pygame.Rect(panel.right - pad - 240, panel.bottom - pad - 48, 240, 48)
+        button(start, self.t("start_round"), self.start_setup, accent=theme.GOOD, size=16)
+        self._text(self.t("setup_hint"), (x0, start.centery - 8), 12, theme.MUTED)
+        self._setup_hits = hits
