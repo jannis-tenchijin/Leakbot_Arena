@@ -6,7 +6,7 @@ Desktop:
     python main.py --bots my_bot:MyBot --seed 7 --size 30 30
 
 Browser: the same choices come from the page URL, e.g.
-    https://<user>.github.io/leakbots-arena/?bots=random_bot,random_bot&seed=7
+    https://<user>.github.io/Leakbot_Arena/?bots=random_bot,random_bot&seed=7
 """
 
 from __future__ import annotations

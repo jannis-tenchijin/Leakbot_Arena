@@ -3,8 +3,8 @@
 Program an autonomous bot that hunts for buried water leaks. Bots share a grid, take turns,
 detect and dig up pipes, fix leaks — and refill their holes before the final whistle.
 
-**▶ Play in the browser: [jannis-tenchijin.github.io/leakbots-arena](https://jannis-tenchijin.github.io/leakbots-arena/)**
-— nothing to install. 1 vs 1: [`?bots=random_bot,random_bot`](https://jannis-tenchijin.github.io/leakbots-arena/?bots=random_bot,random_bot)
+**▶ Play in the browser: [jannis-tenchijin.github.io/Leakbot_Arena](https://jannis-tenchijin.github.io/Leakbot_Arena/)**
+— nothing to install. 1 vs 1: [`?bots=random_bot,random_bot`](https://jannis-tenchijin.github.io/Leakbot_Arena/?bots=random_bot,random_bot)
 
 ![LeakBots Arena](docs/screenshot.png)
 
