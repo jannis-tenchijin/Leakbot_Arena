@@ -132,10 +132,17 @@ def wrap_text(font: pygame.font.Font, text: str, width: int) -> list[str]:
 class Slider:
     """Horizontal 0..1 slider."""
 
-    def __init__(self, rect: pygame.Rect, value: float, on_change: Callable[[float], None]) -> None:
+    def __init__(
+        self,
+        rect: pygame.Rect,
+        value: float,
+        on_change: Callable[[float], None],
+        enabled: Callable[[], bool] = lambda: True,
+    ) -> None:
         self.rect = rect
         self.value = value
         self.on_change = on_change
+        self.enabled = enabled
         self._dragging = False
 
     def _set_from_x(self, x: int) -> None:
@@ -144,6 +151,9 @@ class Slider:
 
     def handle(self, event: pygame.event.Event) -> bool:
         hit = self.rect.inflate(0, 16)
+        if not self.enabled():
+            self._dragging = False
+            return False
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and hit.collidepoint(event.pos):
             self._dragging = True
             self._set_from_x(event.pos[0])
@@ -161,15 +171,17 @@ class Slider:
         self.on_change(self.value)
 
     def draw(self, surf: pygame.Surface) -> None:
+        # Disabled: same shape in muted colours, like a disabled Button
+        fill, rim = (theme.ACCENT, theme.TEXT) if self.enabled() else (theme.PANEL_EDGE, theme.MUTED)
         track = pygame.Rect(self.rect.x, self.rect.centery - 3, self.rect.w, 6)
         pygame.draw.rect(surf, theme.PANEL_EDGE, track, border_radius=3)
         filled = track.copy()
         filled.w = int(track.w * self.value)
-        pygame.draw.rect(surf, theme.ACCENT, filled, border_radius=3)
+        pygame.draw.rect(surf, fill, filled, border_radius=3)
         knob = (self.rect.x + int(self.rect.w * self.value), self.rect.centery)
         pygame.draw.circle(surf, (6, 6, 18), (knob[0], knob[1] + 2), 9)
-        pygame.draw.circle(surf, theme.ACCENT, knob, 9)
-        pygame.draw.circle(surf, theme.TEXT, knob, 9, width=2)
+        pygame.draw.circle(surf, fill, knob, 9)
+        pygame.draw.circle(surf, rim, knob, 9, width=2)
 
 
 def draw_progress(surf: pygame.Surface, rect: pygame.Rect, fraction: float) -> None:

@@ -87,12 +87,31 @@ Ranking: highest score, then fewer invalid moves, then whoever reached their sco
 | STEP / `S`            | advance a single turn                                            |
 | RESTART / `R`         | replay the same map (same seed)                                  |
 | NEW MAP / `N`         | roll a new random map                                            |
-| SIMULATE 100 ROUNDS / `M` | play 100 headless rounds with the current bots, show statistics |
+| RUN 100 ROUNDS / `M`  | play 100 headless rounds with the current bots, show statistics  |
 | PIPES / `P`           | game-master toggle: buried pipes hidden or faintly visible; once a bot owns the satellite, GHOST also shows the A–E risk grades |
 | MARKS / `D`           | show each bot's private detect results as dots (not for satellite owners, who know every square) |
+| MANUAL                | play a single-player round yourself on the same map; click again to hand back to the bots |
 | RULES / `H`           | open the rulebook: every action, its limits and the scoring      |
 | EN \| 日本語 / `L`      | switch all text between English and Japanese (top right)         |
 | Speed slider / `↑ ↓`  | 1 – 500 moves per second, far right = MAX                        |
+
+**Manual mode:** you play one bot with the keyboard. Start it with the MANUAL button,
+`python main.py --manual` or `?mode=manual` in the browser URL. Every key that issues an
+action is exactly one move; the round has the usual 500 moves.
+
+| Key                   | Action                                                           |
+|-----------------------|------------------------------------------------------------------|
+| `W` `A` `S` `D`       | move up / left / down / right                                    |
+| `Q`                   | detect all four neighbouring squares                             |
+| hold `E` + `W A S D`  | unearth (dig up) that side                                       |
+| hold `R` + `W A S D`  | fix the leak on that side                                        |
+| hold `F` + `W A S D`  | refill the hole on that side                                     |
+| `1` / `2`             | buy UT / buy the satellite                                       |
+
+A key help box replaces the simulation panel. PLAY, STEP, the speed slider and RUN 100 ROUNDS
+are off (your key presses are the clock), and so are the hotkeys that clash with the game keys
+(`Space`, `S`, `R`, `D`, `M`, `↑ ↓`). RESTART, NEW MAP / `N`, PIPES / `P`, RULES / `H` and
+`L` still work. An invalid move shows a red X on the board and its reason below the panel.
 
 **Custom sprite:** drag a `.png` onto a bot's scoreboard card. It is saved as
 `bots/sprites/<ClassName>.png` and used from then on.

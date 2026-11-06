@@ -21,10 +21,11 @@ from ..bot_api import BaseBot
 from ..config import DEFAULT_CONFIG, GameConfig
 from ..game import Game
 from ..loader import SPRITES_DIR, sprite_path
-from ..model import RISK_GRADES, PowerUp
+from ..model import RISK_GRADES, Action, PowerUp
 from ..simulation import SimulationResult, SimulationRunner, seat_labels
 from . import theme
 from .i18n import LANGS, rulebook, tr
+from .manual import GAME_KEYS, HELP_ROWS, HumanBot, ManualControls
 from .render import BoardRenderer, draw_robot
 from .widgets import Button, Slider, Switch, draw_progress, wrap_text
 
@@ -34,6 +35,8 @@ SIDEBAR_W = 340
 MAX_RATE = 500  # moves per second at the right end of the slider (before "MAX")
 FRAME_STEP_BUDGET = 0.012  # seconds per frame the engine may use in MAX mode
 SIM_FRAME_BUDGET = 0.02  # seconds per frame spent on simulated rounds
+MANUAL_MOVE_TIME = 0.12  # seconds the human's bot glides to the next square
+HELP_KEY_W = 84  # key-cap column of the manual-mode help box
 
 
 class App:
@@ -46,13 +49,15 @@ class App:
         seed: int | None = None,
         sim_rounds: int = 100,
         lang: str = "en",
+        manual: bool = False,
     ) -> None:
         pygame.init()
         theme.reset_fonts()
-        self.bot_classes = list(bot_classes)
+        self.base_bots = list(bot_classes)  # the line-up MANUAL hands back to
+        self.manual = manual  # a human plays the only seat with the keyboard
+        self.controls = ManualControls()
         self.config = config
         self.sim_rounds = sim_rounds
-        self.labels = seat_labels(self.bot_classes)
         self.set_language(lang if lang in LANGS else "en")
 
         # Layout: board on the left, sidebar on the right
@@ -75,15 +80,26 @@ class App:
         self._acc = 0.0
         self.selected_bot = 0
         self.card_rects: list[pygame.Rect] = []
-        self._toast = ("", 0.0)
+        self._toast = ("", 0.0, theme.GOOD)
 
         # Simulation (a few rounds per frame, see SIM_FRAME_BUDGET)
         self.sim: SimulationRunner | None = None
         self.sim_result: SimulationResult | None = None
 
-        self.sprites = [sprite_path(cls) for cls in self.bot_classes]
+        self._set_lineup()
         self.new_game(seed)
         self._build_widgets()
+
+    def _set_lineup(self) -> None:
+        """Seats for the next round: the human alone in manual mode, else the start line-up."""
+        self.bot_classes: list[type[BaseBot]] = [HumanBot] if self.manual else list(self.base_bots)
+        self.sprites = [sprite_path(cls) for cls in self.bot_classes]
+        self.selected_bot = 0
+
+    @property
+    def labels(self) -> list[str]:
+        """Seat names; the human's follows the UI language."""
+        return [self.t("you")] if self.manual else seat_labels(self.bot_classes)
 
     # --- Language -------------------------------------------------------------------------
     def set_language(self, lang: str) -> None:
@@ -109,14 +125,34 @@ class App:
         self.new_game(self.seed)
 
     def toggle_play(self) -> None:
-        if self.game.over:
+        if self.game.over or self.manual:  # in manual mode a key press is the clock
             return
         self.playing = not self.playing
 
     def step_once(self) -> None:
-        if not self.game.over:
+        if not self.game.over and not self.manual:
             self.playing = False
             self._step(time.perf_counter())
+
+    # --- Manual mode ------------------------------------------------------------------------
+    def toggle_manual(self) -> None:
+        """Hand the only seat to the keyboard, or back to the start line-up. Keeps the map."""
+        if self.simulating:  # the key help box takes the simulation panel's place
+            self.toggle_simulation()
+        self.manual = not self.manual
+        self.controls.reset()
+        self._set_lineup()
+        self.new_game(self.seed)
+
+    def play_manual(self, action: Action) -> None:
+        """One human move: queue the action on the HumanBot and step the game exactly once."""
+        if not self.manual or self.game.over or self.show_rules:
+            return
+        self.game.bots[0].queued = action
+        event = self.game.step()
+        self.renderer.on_turn(event, time.perf_counter(), MANUAL_MOVE_TIME)
+        if not event.result.success:  # engine reasons are English, like the card's error line
+            self.toast(self.t("toast_invalid", e=event.result.message), theme.DANGER)
 
     def toggle_rules(self) -> None:
         self.show_rules = not self.show_rules
@@ -170,6 +206,8 @@ class App:
             self.sim.cancel()
             self.sim_result = self.sim.result()
             return
+        if self.manual:  # a human cannot be simulated
+            return
         self.sim_result = None
         self.sim = SimulationRunner(self.bot_classes, self.sim_rounds, random.randrange(1_000_000), self.config)
 
@@ -197,8 +235,8 @@ class App:
         self.sprites = [sprite_path(c) for c in self.bot_classes]
         self.toast(self.t("toast_sprite_saved", name=cls.display_name()))
 
-    def toast(self, message: str) -> None:
-        self._toast = (message, time.perf_counter() + 3.0)
+    def toast(self, message: str, color: tuple[int, int, int] = theme.GOOD) -> None:
+        self._toast = (message, time.perf_counter() + 3.0, color)
 
     def _card_at(self, pos: tuple[int, int]) -> int | None:
         for i, rect in enumerate(self.card_rects):
@@ -216,21 +254,34 @@ class App:
         def r(col: int, row_y: int, width: int) -> pygame.Rect:
             return pygame.Rect(x + col * (width + gap), row_y, width, h)
 
+        def auto() -> bool:  # bots play: the clock buttons work (in manual mode a key press is the clock)
+            return not self.game.over and not self.manual
+
+        # Third row: PIPES | MARKS | MANUAL, widths sized to the longest label of each (at size 12)
+        pipes_w, marks_w = 120, 98
+        manual_x = x + pipes_w + marks_w + 2 * gap
+        self.manual_button = Button(pygame.Rect(manual_x, y3, x + w - manual_x, h),
+                                    lambda: self.t("manual_on" if self.manual else "manual_off"),
+                                    self.toggle_manual, size=12)
         self.buttons = [
             Button(r(0, y1, w3), lambda: self.t("pause" if self.playing else "play"), self.toggle_play,
-                   enabled=lambda: not self.game.over),
-            Button(r(1, y1, w3), lambda: self.t("step"), self.step_once, enabled=lambda: not self.game.over),
+                   enabled=auto),
+            Button(r(1, y1, w3), lambda: self.t("step"), self.step_once, enabled=auto),
             Button(r(2, y1, w3), lambda: self.t("restart"), self.restart),
             Button(r(0, y2, w2), lambda: self.t("new_map"), self.new_game),
             Button(r(1, y2, w2),
                    lambda: self.t("cancel_sim") if self.simulating else self.t("simulate", n=self.sim_rounds),
-                   self.toggle_simulation, accent=theme.GOOD),
-            Button(r(0, y3, w2), lambda: self.t("pipes_ghost" if self.ghost_pipes else "pipes_hidden"),
-                   self._toggle_pipes, accent=theme.WATER),
-            Button(r(1, y3, w2), lambda: self.t("marks_on" if self.show_marks else "marks_off"),
-                   self._toggle_marks, accent=theme.WATER),
+                   self.toggle_simulation, enabled=lambda: not self.manual, accent=theme.GOOD),
+            Button(pygame.Rect(x, y3, pipes_w, h),
+                   lambda: self.t("pipes_ghost" if self.ghost_pipes else "pipes_hidden"),
+                   self._toggle_pipes, accent=theme.WATER, size=12),
+            Button(pygame.Rect(x + pipes_w + gap, y3, marks_w, h),
+                   lambda: self.t("marks_on" if self.show_marks else "marks_off"),
+                   self._toggle_marks, accent=theme.WATER, size=12),
+            self.manual_button,
         ]
-        self.slider = Slider(pygame.Rect(x + 4, 312, w - 8, 18), self.speed, self._set_speed)
+        self.slider = Slider(pygame.Rect(x + 4, 312, w - 8, 18), self.speed, self._set_speed,
+                             enabled=lambda: not self.manual)
 
         # Top-right corner: rulebook + language switch (both stay usable over the rulebook)
         right = x + w
@@ -263,6 +314,10 @@ class App:
             self.handle_drop(event.file)
         elif event.type == pygame.KEYDOWN:
             self._handle_key(event.key)
+        elif event.type == pygame.KEYUP:
+            self.controls.key_up(event.key)  # in every mode, so no modifier stays stuck after a switch
+        elif event.type == pygame.WINDOWFOCUSLOST:
+            self.controls.reset()  # keys released outside the window never send KEYUP
         elif event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION):
             self._handle_mouse(event)
 
@@ -273,11 +328,22 @@ class App:
             elif not WEB:  # closing a browser tab is the web "quit"
                 self.running = False
             return
+        if self.manual and key in GAME_KEYS:
+            # W A S D Q E R F 1 2 belong to the game here, so S/R/D never step, restart or toggle marks
+            action = self.controls.key_down(key)  # E/R/F are tracked even under the rulebook
+            if action is not None:
+                self.play_manual(action)  # ignored while the rulebook is open
+            return
         keys = {
             pygame.K_h: self.toggle_rules,
             pygame.K_l: self.toggle_language,
         }
-        if not self.show_rules:  # game controls are paused while the rulebook is open
+        if self.manual and not self.show_rules:  # no play/step/sim/speed keys: a key press is the clock
+            keys.update({
+                pygame.K_n: self.new_game,
+                pygame.K_p: self._toggle_pipes,
+            })
+        elif not self.show_rules:  # game controls are paused while the rulebook is open
             keys.update({
                 pygame.K_SPACE: self.toggle_play,
                 pygame.K_s: self.step_once,
@@ -350,6 +416,8 @@ class App:
         return rect
 
     def _mode_label(self) -> str:
+        if self.manual:
+            return self.t("mode_manual")
         n = len(self.bot_classes)
         return self.t("mode_single") if n == 1 else self.t("mode_duel") if n == 2 else self.t("mode_royale", n=n)
 
@@ -376,15 +444,18 @@ class App:
 
         for button in self.buttons:
             button.draw(self.screen)
-        speed = self.t("max") if self.is_max_speed else self.t("rate", n=f"{self.rate:.0f}")
+        if self.manual:
+            speed = self.t("speed_manual")
+        else:
+            speed = self.t("max") if self.is_max_speed else self.t("rate", n=f"{self.rate:.0f}")
         self._text(self.t("speed"), (x, 284), 12, theme.MUTED, bold=True)
         self._text(speed, (x + w, 284), 12, theme.TEXT, right=True)
         self.slider.draw(self.screen)
 
-        # Scoreboard + simulation panel share the remaining height
+        # Scoreboard + simulation panel (key help in manual mode) share the remaining height
         top = 340
         hint_top = self.screen.get_height() - 58
-        sim_h = 150 if len(self.bot_classes) <= 2 else 190
+        sim_h = 182 if self.manual else 150 if len(self.bot_classes) <= 2 else 190
         self._text(self.t("scoreboard"), (x, top), 12, theme.MUTED, bold=True)
         card_area = hint_top - sim_h - (top + 20)
         card_h = max(24, min(84, card_area // len(self.bot_classes) - 6))
@@ -395,16 +466,23 @@ class App:
             self.card_rects.append(rect)
             self._draw_card(rect, bot_id)
             y += card_h + 6
-        self._draw_sim_panel(pygame.Rect(x, hint_top - sim_h, w, sim_h - 8))
+        panel = pygame.Rect(x, hint_top - sim_h, w, sim_h - 8)
+        if self.manual:
+            self._draw_manual_help(panel)
+        else:
+            self._draw_sim_panel(panel)
 
         # Hints / toast
-        msg, until = self._toast
+        msg, until, color = self._toast
         if msg and now < until:
-            self._text(msg, (x, hint_top + 4), 12, theme.GOOD, bold=True)
+            # Largest size that fits: engine reasons of invalid moves can be long
+            size = next((s for s in (12, 11, 10) if theme.font(s, True).size(msg)[0] <= w), 9)
+            self._text(msg, (x, hint_top + 4), size, color, bold=True)
         else:
             self._text(self.t("hint_web_sprite" if WEB else "hint_drop"), (x, hint_top + 4), 11, theme.MUTED)
-        self._text(self.t("hint_keys1"), (x, hint_top + 22), 11, theme.MUTED)
-        self._text(self.t("hint_keys2"), (x, hint_top + 36), 11, theme.MUTED)
+        hints = ("hint_manual1", "hint_manual2") if self.manual else ("hint_keys1", "hint_keys2")
+        self._text(self.t(hints[0]), (x, hint_top + 22), 11, theme.MUTED)
+        self._text(self.t(hints[1]), (x, hint_top + 36), 11, theme.MUTED)
 
     def _draw_card(self, rect: pygame.Rect, bot_id: int) -> None:
         g = self.game
@@ -451,6 +529,24 @@ class App:
             pygame.draw.rect(self.screen, color, pill, border_radius=7)
             self.screen.blit(img, img.get_rect(center=pill.center))
             x = pill.right + 3
+
+    def _draw_manual_help(self, rect: pygame.Rect) -> None:
+        """Key help box (replaces the simulation panel in manual mode); the held modifier row lights up."""
+        pygame.draw.rect(self.screen, theme.PANEL, rect, border_radius=6)
+        pygame.draw.rect(self.screen, theme.PANEL_EDGE, rect, width=2, border_radius=6)
+        x, y = rect.x + 10, rect.y + 8
+        self._text(self.t("help_title"), (x, y), 12, theme.ACCENT, bold=True)
+        y += 22
+        costs = {"help_buy_ut": self.config.cost_ut, "help_buy_sat": self.config.cost_satellite}
+        for keys_key, text_key, modifier in HELP_ROWS:
+            if modifier is not None and modifier == self.controls.modifier:
+                pygame.draw.rect(self.screen, (52, 56, 112), (x - 5, y - 1, rect.w - 10, 17), border_radius=4)
+            self._text(self.t(keys_key), (x, y), 12, theme.ACCENT, bold=True)
+            # Only the buy rows have a {c} placeholder; format() ignores it for the others
+            self._text(self.t(text_key, c=costs.get(text_key)), (x + HELP_KEY_W, y), 12, theme.TEXT)
+            y += 17
+        self._text(self.t("help_note"), (x, y + 4), 11, theme.MUTED)
+        self.help_bottom = y + 4 + theme.font(11).get_linesize()  # checked by the layout test
 
     def _draw_sim_panel(self, rect: pygame.Rect) -> None:
         pygame.draw.rect(self.screen, theme.PANEL, rect, border_radius=6)
