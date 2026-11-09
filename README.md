@@ -202,15 +202,20 @@ Fair play: only use the public members of `view` (nothing starting with `_`).
 
 ## Example bots
 
-| Bot | Strategy | Solo avg (100 rounds) |
+| Bot | Strategy | Solo avg (100 rounds, seed 1) |
 |-----|----------|----------------------:|
-| `random_bot` | random actions — the baseline | about −3 |
-| `government_bot` | follows detected pipes for points, buys UT at 15, then scans for leaks and digs, fixes and refills them; grabs a nearby punk pickup and chains the strongest adjacent opponent | about 275 |
-| `tenchijin_bot` | earns 25 points, buys the satellite, then digs D/E squares by risk vs. walking distance (fix + refill leaks, refill the rest); also scores the punk pickup as a target | about 108 |
+| `random_bot` | random actions — the baseline | about −6 |
+| `government_bot` | follows detected pipes for points, buys UT at the waterworks, scans for leaks and repairs them with valves; grabs a nearby punk pickup and chases the leader to chain it | about 419 |
+| `tenchijin_bot` | earns 25 points, buys the satellite, then digs D/E squares by risk vs. walking distance and repairs leaks with valves; waits near the undug B+ squares once every leak is found; punk chase | about 449 |
+| `boss_bot` | plays to win: **locks the waterworks** (digs every square around it right after spawning, so rivals cannot buy UT or the satellite; reopens it only for its own purchase), steals prepared fixes and reopen bonuses, races for the punk, chains and traps opponents, late-game hygiene | about 504 |
 
-Try them: `python main.py --bots government_bot tenchijin_bot random_bot`, or on the web
-`?bots=government_bot,tenchijin_bot,random_bot`. Both strategy bots are single, commented files —
-good starting points for your own bot.
+BossBot wins about 90–100 % of 1 vs 1 rounds against GovernmentBot and TenchijinBot and about
+97 % of Boss + Government + Tenchijin battle royales. **Counter-play:** any bot may refill any
+hole, so a bot that refills a hole next to the waterworks can still shop — the example bots don't.
+
+Try them: `python main.py --bots boss_bot government_bot tenchijin_bot`, or on the web
+`?bots=boss_bot,government_bot,tenchijin_bot`. Every example bot is a single, commented file —
+a good starting point for your own bot.
 
 ## Browser version (GitHub Pages)
 
